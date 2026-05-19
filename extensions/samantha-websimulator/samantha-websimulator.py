@@ -8,7 +8,7 @@ import importlib.util
 import os
 from urllib.parse import urlparse, parse_qs
 
-client = OpenAI(base_url="https://ollama-api.nodemixaholic.com/v1", api_key="x")
+client = OpenAI(base_url="http://100.118.11.83/v1", api_key="x")
 
 RED = '\033[91m'
 GREEN = '\033[92m'
@@ -192,7 +192,7 @@ def simulate_web_request(req):
 	try:
 		# Send the messages to OpenAI and get the response
 		response = client.chat.completions.create(
-			model="sparksammy/tinysam-l3.2-v2:latest",
+			model="sparksammy/samantha-combo-3-small:latest",
 			messages=all_messages,
 		)
 
