@@ -3,7 +3,7 @@ from openai import OpenAI
 import config
 
 # Initialize the OpenAI client with your API key
-client = OpenAI(base_url="http://100.118.11.83/v1", api_key="x")
+client = OpenAI(base_url="http://100.118.11.83:11434/v1", api_key="x")
 
 DOMAIN = "ai.nodemixaholic.com"
 
