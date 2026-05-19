@@ -3,12 +3,12 @@ from openai import OpenAI
 import config
 
 # Initialize the OpenAI client with your API key
-client = OpenAI(base_url="https://ollama-api.nodemixaholic.com/v1", api_key="x")
+client = OpenAI(base_url="http://100.118.11.83/v1", api_key="x")
 
 DOMAIN = "ai.nodemixaholic.com"
 
 messages = []
-selected_model = "sparksammy/tinysam-l3.2-v2:latest"
+selected_model = "sparksammy/samantha-combo-3-small:latest"
 previous_model = selected_model
 
 system_prompts = [
