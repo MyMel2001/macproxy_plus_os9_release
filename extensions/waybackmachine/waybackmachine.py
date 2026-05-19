@@ -356,3 +356,4 @@ def handle_request(req):
 	except Exception as e:
 		print(f"Error occurred: {str(e)}")
 		return f"<html><body><p>Error fetching archived page: {str(e)}</p></body></html>", 500, {'Content-Type': 'text/html'}
+		
