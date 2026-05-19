@@ -1,10 +1,10 @@
-# HINT: "NOT Youtube" is not associated with or endorsed by YouTube, and does not connect to or otherwise interact with YouTube in any way.
 
 import os
 import json
 import random
 import string
 import subprocess
+import shutil
 from flask import request, send_file, render_template_string
 from urllib.parse import urlparse, parse_qs
 import yt_dlp
@@ -19,6 +19,129 @@ PROFILE = "plus"
 # Ensure directories exist
 os.makedirs(FLIM_DIRECTORY, exist_ok=True)
 os.makedirs(DOWNLOAD_DIRECTORY, exist_ok=True)
+
+# Augment PATH to ensure subprocesses (ffmpeg, deno, node) are found
+def augment_path():
+	extra_paths = [
+		"/opt/homebrew/bin",
+		"/usr/local/bin",
+		"/usr/bin",
+		"/bin",
+		"/usr/sbin",
+		"/sbin",
+		os.path.expanduser("~/.local/bin"),
+	]
+	
+	# Try to locate NVM node binary path to add it if nvm is used
+	nvm_dir = os.path.expanduser("~/.nvm/versions/node")
+	if os.path.exists(nvm_dir):
+		try:
+			for version in sorted(os.listdir(nvm_dir), reverse=True):
+				bin_path = os.path.join(nvm_dir, version, "bin")
+				if os.path.exists(bin_path):
+					extra_paths.append(bin_path)
+					break
+		except Exception:
+			pass
+
+	current_path = os.environ.get("PATH", "")
+	split_paths = current_path.split(os.path.pathsep) if current_path else []
+	paths_to_add = [p for p in extra_paths if p not in split_paths]
+	if paths_to_add:
+		os.environ["PATH"] = os.path.pathsep.join(paths_to_add) + (os.path.pathsep + current_path if current_path else "")
+
+augment_path()
+
+# Ensure yt-dlp-ejs (the JS challenge solver scripts) is installed
+def ensure_ejs_installed():
+	try:
+		import importlib
+		importlib.import_module('yt_dlp_ejs')
+		print("[yeahyoutube] yt-dlp-ejs is installed")
+	except ImportError:
+		print("[yeahyoutube] yt-dlp-ejs not found, installing...")
+		try:
+			import sys
+			subprocess.check_call(
+				[sys.executable, '-m', 'pip', 'install', 'yt-dlp-ejs'],
+				stdout=subprocess.DEVNULL, stderr=subprocess.PIPE
+			)
+			print("[yeahyoutube] yt-dlp-ejs installed successfully")
+		except Exception as e:
+			print(f"[yeahyoutube] WARNING: Failed to install yt-dlp-ejs: {e}")
+			print("[yeahyoutube] YouTube n-challenge solving may fail. Run: pip install 'yt-dlp[default]'")
+
+ensure_ejs_installed()
+
+def get_js_runtimes():
+	runtimes = {}
+	
+	# 1. Check for deno
+	deno_path = shutil.which("deno")
+	if not deno_path:
+		for p in ["/opt/homebrew/bin/deno", "/usr/local/bin/deno"]:
+			if os.path.exists(p) and os.access(p, os.X_OK):
+				deno_path = p
+				break
+	if deno_path:
+		runtimes["deno"] = {"path": deno_path}
+	else:
+		runtimes["deno"] = {}
+		
+	# 2. Check for node
+	node_path = shutil.which("node")
+	if not node_path:
+		# Check common mac/nvm paths
+		possible_node_paths = ["/opt/homebrew/bin/node", "/usr/local/bin/node"]
+		nvm_dir = os.path.expanduser("~/.nvm/versions/node")
+		if os.path.exists(nvm_dir):
+			try:
+				for version in sorted(os.listdir(nvm_dir), reverse=True):
+					bin_path = os.path.join(nvm_dir, version, "bin", "node")
+					if os.path.exists(bin_path):
+						possible_node_paths.append(bin_path)
+			except Exception:
+				pass
+		for p in possible_node_paths:
+			if os.path.exists(p) and os.access(p, os.X_OK):
+				node_path = p
+				break
+	if node_path:
+		runtimes["node"] = {"path": node_path}
+	else:
+		runtimes["node"] = {}
+
+	# 3. Check for bun
+	bun_path = shutil.which("bun")
+	if not bun_path:
+		for p in [os.path.expanduser("~/.bun/bin/bun"), "/opt/homebrew/bin/bun", "/usr/local/bin/bun"]:
+			if os.path.exists(p) and os.access(p, os.X_OK):
+				bun_path = p
+				break
+	if bun_path:
+		runtimes["bun"] = {"path": bun_path}
+	else:
+		runtimes["bun"] = {}
+
+	return runtimes
+
+def get_cookie_file():
+	prod_cookies = '/DATA/AppData/macproxy_plus_os9_release/cookies.txt'
+	if os.path.exists(prod_cookies):
+		return prod_cookies
+		
+	# Local testing fallbacks
+	local_options = [
+		os.path.join(EXTENSION_DIR, "cookies.txt"),
+		os.path.join(EXTENSION_DIR, "www.youtube.com_cookies.txt"),
+		os.path.expanduser("~/Downloads/www.youtube.com_cookies.txt"),
+		os.path.expanduser("~/Downloads/www.youtube.com_cookies (1).txt"),
+	]
+	for p in local_options:
+		if os.path.exists(p):
+			return p
+			
+	return prod_cookies # Default back to production path if none exist
 
 def generate_homepage():
 	return render_template_string('''
@@ -104,14 +227,14 @@ def generate_search_results_html(videos):
 
 def handle_video_request(video_id):
 	# Download the video using yt-dlp
-	video_url = f"https://www.youtube.com/watch?v={video_id}"
+	video_url = f"https://invidious.nerdvpn.de/watch?v={video_id}"
 	
 	ydl_opts = {
-		'format': 'worst',
 		'outtmpl': os.path.join(DOWNLOAD_DIRECTORY, f"{video_id}.%(ext)s"),
 		'noplaylist': True,
-		'quiet': True,
-		'no_warnings': True,
+		'verbose': True,
+		'js_runtimes': get_js_runtimes(),
+		'remote_components': ['ejs:github'],
 	}
 
 	downloaded_video_path = None
@@ -160,9 +283,15 @@ def handle_video_request(video_id):
 
 def search_videos(query):
 	ydl_opts = {
-		'quiet': True,
+		'verbose': True,
 		'default_search': 'ytsearch10',  # search for 10 videos
 		'noplaylist': True,
+		'skip_download': True,
+		'extract_flat': 'in_playlist',
+		'cookiefile': get_cookie_file(),
+		'js_runtimes': get_js_runtimes(),
+		'remote_components': ['ejs:github'],
+		'extractor_args': {'youtube': {'player-client': ['default','mweb']}}
 	}
 	with yt_dlp.YoutubeDL(ydl_opts) as ydl:
 		try:
