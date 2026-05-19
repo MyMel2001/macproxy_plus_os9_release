@@ -257,15 +257,14 @@ def handle_video_request(video_id):
 			"-n", # dont overwrite output file if it exists
 			"-i", downloaded_video_path,
 			"-f", "mov",
-			"-vcodec", "svq1",  # Sorenson Video codec (better Mac OS 9 compatibility)
-			"-acodec", "adpcm_ima_qt",  # ADPCM audio (better Mac OS 9 compatibility)
-			"-ar", "11025",  # Lower audio sample rate
+			"-c:v", "mpeg4",  # MPEG-4 Part 2 (very fast encode, compatible with QT 6)
+			"-vtag", "mp4v",
+			"-c:a", "adpcm_ima_qt",  # ADPCM audio (fast, very compatible)
+			"-ar", "22050",  # Better audio sample rate
 			"-ac", "1",  # Mono audio
-			"-vf", "scale=300:225",  # Lower resolution for Mac OS 9
-			"-r", "12",  # Lower frame rate for 56k
-			"-b:v", "74k",  # Very low bitrate for 56k
-			"-b:a", "4k",  # Low audio bitrate
-			"-q:v", "5",  # Slightly lower quality
+			"-vf", "scale=320:240,format=yuv420p",  # Standard 320x240 with safe pixel format
+			"-r", "15",  # 15 fps
+			"-b:v", "250k",  # Appropriate bitrate for 320x240 mpeg4
 			flim_path
 		], check=True, capture_output=True, text=True)
 	except subprocess.CalledProcessError as e:
