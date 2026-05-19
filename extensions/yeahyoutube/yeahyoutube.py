@@ -257,14 +257,13 @@ def handle_video_request(video_id):
 			"-n", # dont overwrite output file if it exists
 			"-i", downloaded_video_path,
 			"-f", "mov",
-			"-c:v", "mpeg4",  # MPEG-4 Part 2 (very fast encode, compatible with QT 6)
-			"-vtag", "mp4v",
-			"-c:a", "adpcm_ima_qt",  # ADPCM audio (fast, very compatible)
-			"-ar", "22050",  # Better audio sample rate
+			"-c:v", "mjpeg",  # Motion JPEG (extremely fast, compatible with QuickTime 2.0+)
+			"-c:a", "adpcm_ima_qt",  # ADPCM audio (compatible with QT 2.1+)
+			"-ar", "22050",  # 22kHz sample rate
 			"-ac", "1",  # Mono audio
-			"-vf", "scale=320:240,format=yuv420p",  # Standard 320x240 with safe pixel format
+			"-vf", "scale=320:240",  # 320x240 resolution
 			"-r", "15",  # 15 fps
-			"-b:v", "250k",  # Appropriate bitrate for 320x240 mpeg4
+			"-q:v", "7",  # Quality setting for MJPEG (lower is better, 7 is a good balance for file size/quality)
 			flim_path
 		], check=True, capture_output=True, text=True)
 	except subprocess.CalledProcessError as e:
