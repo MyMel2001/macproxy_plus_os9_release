@@ -6,7 +6,7 @@ import string
 import subprocess
 import shutil
 import time
-from flask import request, send_file, render_template_string
+from flask import request, send_file, render_template_string, Response, abort
 from urllib.parse import urlparse, parse_qs
 import yt_dlp
 import config
@@ -526,11 +526,23 @@ def generate_import_result_page(imported_count, failed=False):
 	return html
 
 # ---------------------------------------------------------------------------
-# Video operations
+# Video operations - Streaming instead of download
 # ---------------------------------------------------------------------------
 
-def handle_video_request(video_id):
-	# Download the video using yt-dlp
+def transcode_video(video_id):
+	"""
+	Download a YouTube video and transcode it to a QuickTime-compatible .mov file
+	for progressive download / streaming on Mac OS 9 browsers.
+	
+	Returns the path to the transcoded .mov file, or None on failure.
+	"""
+	flim_path = os.path.join(FLIM_DIRECTORY, f"{video_id}.mov")
+	
+	# If the transcoded file already exists, return it immediately (cache hit)
+	if os.path.exists(flim_path):
+		print(f"[yeahyoutube] Cache hit for video {video_id}")
+		return flim_path
+	
 	video_url = f"https://invidious.nerdvpn.de/watch?v={video_id}"
 	
 	ydl_opts = {
@@ -547,43 +559,184 @@ def handle_video_request(video_id):
 			info_dict = ydl.extract_info(video_url, download=True)
 			downloaded_video_path = ydl.prepare_filename(info_dict)
 		except Exception as e:
-			print(f"Error downloading video: {e}")
-			return "Error downloading video", 500
+			print(f"[yeahyoutube] Error downloading video: {e}")
+			return None
 			
 	if not downloaded_video_path or not os.path.exists(downloaded_video_path):
-		return "Error: Failed to download video", 500
+		print(f"[yeahyoutube] Failed to download video {video_id}")
+		return None
 
-	flim_path = os.path.join(FLIM_DIRECTORY, f"{video_id}.mov")
-	
 	try:
 		subprocess.run([
 			"ffmpeg",
-			"-n", # dont overwrite output file if it exists
+			"-y",  # Overwrite output file if it exists (we already checked, but safe)
 			"-i", downloaded_video_path,
 			"-f", "mov",
-			"-vcodec", "svq1",  # Sorenson Video codec (better Mac OS 9 compatibility)
-			"-acodec", "adpcm_ima_qt",  # ADPCM audio (better Mac OS 9 compatibility)
-			"-ar", "11025",  # Lower audio sample rate
+			"-movflags", "faststart",  # Enable QuickTime progressive download / streaming
+			"-vcodec", "svq1",  # Sorenson Video codec (best Mac OS 9 QuickTime compatibility)
+			"-acodec", "adpcm_ima_qt",  # IMA ADPCM audio (best Mac OS 9 QuickTime compatibility)
+			"-ar", "11025",  # Low audio sample rate for 56k
 			"-ac", "1",  # Mono audio
-			"-vf", "scale=300:225",  # Lower resolution for Mac OS 9
-			"-r", "12",  # Lower frame rate for 56k
-			"-b:v", "74k",  # Very low bitrate for 56k
+			"-vf", "scale=300:225",  # Low resolution for Mac OS 9 screens
+			"-r", "12",  # Low frame rate for 56k modem
+			"-b:v", "74k",  # Very low video bitrate for 56k
 			"-b:a", "4k",  # Low audio bitrate
 			"-q:v", "5",  # Slightly lower quality
 			flim_path
 		], check=True, capture_output=True, text=True)
+		print(f"[yeahyoutube] Successfully transcoded video {video_id} to {flim_path}")
 	except subprocess.CalledProcessError as e:
-		print(f"ffmpeg error: {e.stderr}")
-		return "Error generating video", 500
+		print(f"[yeahyoutube] ffmpeg error: {e.stderr}")
+		return None
 	finally:
-		# Clean up the downloaded file
-		if os.path.exists(downloaded_video_path):
+		# Clean up the downloaded source file
+		if downloaded_video_path and os.path.exists(downloaded_video_path):
 			os.remove(downloaded_video_path)
+			print(f"[yeahyoutube] Cleaned up source file {downloaded_video_path}")
 
 	if os.path.exists(flim_path):
-		return send_file(flim_path, as_attachment=True, download_name=f"{video_id}.mov")
+		return flim_path
 	else:
-		return "Error: File not generated", 500
+		print(f"[yeahyoutube] Transcoded file not found at {flim_path}")
+		return None
+
+
+def stream_video(video_id):
+	"""
+	Serve a transcoded .mov file with HTTP Range support for QuickTime
+	progressive download (streaming).
+	"""
+	flim_path = transcode_video(video_id)
+	if not flim_path:
+		return abort(500, "Error: Failed to transcode video")
+	
+	file_size = os.path.getsize(flim_path)
+	
+	# Handle HTTP Range requests (required for QuickTime progressive download)
+	range_header = request.headers.get('Range', None)
+	
+	if range_header:
+		# Parse the Range header: "bytes=<start>-<end>"
+		byte_range = range_header.strip().split('bytes=')[1]
+		range_start, range_end = byte_range.split('-')
+		range_start = int(range_start) if range_start else 0
+		range_end = int(range_end) if range_end else file_size - 1
+		
+		# If no end was specified, send from start to end of file
+		if range_end >= file_size:
+			range_end = file_size - 1
+		
+		length = range_end - range_start + 1
+		
+		# Read the requested byte range
+		with open(flim_path, 'rb') as f:
+			f.seek(range_start)
+			data = f.read(length)
+		
+		response = Response(
+			data,
+			status=206,  # Partial Content
+			mimetype='video/quicktime',
+			headers={
+				'Content-Range': f'bytes {range_start}-{range_end}/{file_size}',
+				'Content-Length': str(length),
+				'Accept-Ranges': 'bytes',
+			}
+		)
+		return response
+	else:
+		# No Range header - send the entire file
+		return send_file(
+			flim_path,
+			mimetype='video/quicktime',
+			as_attachment=False,  # Do NOT force download - let the browser/QuickTime handle it
+			download_name=f"{video_id}.mov"
+		)
+
+
+def generate_watch_page(video_id, video_info=None):
+	"""
+	Generate a watch page with an embedded QuickTime player.
+	Uses HTML 3.2-compatible <embed> tag for maximum compatibility
+	with IE5 and Netscape Navigator on Mac OS 9.
+	"""
+	title = video_info.get('title', 'Video') if video_info else 'Video'
+	creator = video_info.get('uploader', 'Unknown') if video_info else 'Unknown'
+	description = video_info.get('description', '') if video_info else ''
+	
+	# Format description for display
+	if description:
+		if len(description) > 300:
+			formatted_description = f"{description[:300]}..."
+		else:
+			formatted_description = description
+	else:
+		formatted_description = ""
+	
+	# Stream URL - use the youtube.com domain so the proxy routes it through this extension
+	stream_url = f"https://www.{DOMAIN}/stream/{video_id}.mov"
+	
+	html = f'''<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<title>Yeah! YouTube - {title}</title>
+</head>
+<body>
+<center>
+<h2>{title}</h2>
+<br>
+<b>{creator}</b>
+<br><br>
+<embed src="{stream_url}" type="video/quicktime" width="300" height="225" autoplay="true" controller="true" pluginspage="http://www.apple.com/quicktime/download/">
+<br><br>
+<font size="2">
+<a href="/">[Back to Home]</a>
+</font>
+</center>
+<hr>
+<font size="2">
+{formatted_description}
+</font>
+<hr>
+<center><font size="2">Yeah! YouTube - Video Player</font></center>
+</body>
+</html>'''
+	return html
+
+
+def fetch_video_info(video_id):
+	"""
+	Fetch metadata for a single video using yt-dlp (without downloading).
+	"""
+	video_url = f"https://invidious.nerdvpn.de/watch?v={video_id}"
+	
+	ydl_opts = {
+		'verbose': False,
+		'quiet': True,
+		'noplaylist': True,
+		'skip_download': True,
+		'cookiefile': get_cookie_file(),
+		'js_runtimes': get_js_runtimes(),
+		'remote_components': ['ejs:github'],
+		'extractor_args': {'youtube': {'player-client': ['default','mweb']}}
+	}
+	
+	with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+		try:
+			info = ydl.extract_info(video_url, download=False)
+			return {
+				'id': info.get('id', video_id),
+				'title': info.get('title', 'Untitled'),
+				'uploader': info.get('uploader', 'Unknown'),
+				'description': info.get('description', ''),
+				'view_count': info.get('view_count', 0),
+				'upload_date': info.get('upload_date', ''),
+			}
+		except Exception as e:
+			print(f"[yeahyoutube] Error fetching video info: {e}")
+			return None
+
 
 def search_videos(query):
 	ydl_opts = {
@@ -614,9 +767,19 @@ def handle_request(req):
 	path = parsed_url.path
 	query_params = parse_qs(parsed_url.query)
 
+	# /watch?v=ID - Show the watch page with embedded QuickTime player
 	if path == "/watch" and 'v' in query_params:
 		video_id = query_params['v'][0]
-		return handle_video_request(video_id)
+		# Fetch video info for the watch page
+		video_info = fetch_video_info(video_id)
+		return generate_watch_page(video_id, video_info), 200
+	
+	# /stream/ID.mov - Stream the transcoded video with Range support
+	elif path.startswith("/stream/") and path.endswith(".mov"):
+		video_id = path[len("/stream/"):-len(".mov")]
+		if not video_id:
+			return "Error: No video ID specified", 400
+		return stream_video(video_id)
 	
 	elif path == "/results" and 'search_query' in query_params:
 		query = query_params['search_query'][0]
