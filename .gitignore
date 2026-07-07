@@ -20,3 +20,6 @@ current
 extensions/youtube
 **/cached_images/
 **/.DS_Store
+
+**/extensions/yeahyoutube/subscriptions.json
+**/extensions/yeahyoutube/cookies.txt

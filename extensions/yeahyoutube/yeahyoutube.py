@@ -6,9 +6,10 @@ import string
 import subprocess
 import shutil
 import time
+import xml.etree.ElementTree as ET
 from flask import request, send_file, render_template_string, Response, abort
 from urllib.parse import urlparse, parse_qs
-import yt_dlp
+import requests
 import config
 
 DOMAIN = "youtube.com"
@@ -128,11 +129,26 @@ def get_js_runtimes():
 	return runtimes
 
 def get_cookie_file():
+	"""
+	Return the path to a cookie file for yt-dlp.
+	
+	yt-dlp will try to save cookies to this path on close, so the parent
+	directory MUST exist and be writable. We check several locations in
+	order of preference, and if none exist, we fall back to a guaranteed
+	writable path inside the extension directory.
+	"""
+	# Production path (used on the actual Macproxy deployment)
 	prod_cookies = '/DATA/AppData/macproxy_plus_os9_release/cookies.txt'
 	if os.path.exists(prod_cookies):
 		return prod_cookies
 		
-	# Local testing fallbacks
+	# If the production directory exists but the file doesn't, we can use it
+	# (yt-dlp will create the file on close)
+	prod_dir = os.path.dirname(prod_cookies)
+	if os.path.isdir(prod_dir):
+		return prod_cookies
+		
+	# Local testing fallbacks - check for existing cookie files
 	local_options = [
 		os.path.join(EXTENSION_DIR, "cookies.txt"),
 		os.path.join(EXTENSION_DIR, "www.youtube.com_cookies.txt"),
@@ -142,8 +158,13 @@ def get_cookie_file():
 	for p in local_options:
 		if os.path.exists(p):
 			return p
-			
-	return prod_cookies # Default back to production path if none exist
+	
+	# Fallback: use a cookie file inside the extension directory, which is
+	# guaranteed to exist (we create FLIM_DIRECTORY and DOWNLOAD_DIRECTORY there).
+	# This ensures yt-dlp has a writable path to save cookies on close.
+	fallback_cookie = os.path.join(EXTENSION_DIR, "cookies.txt")
+	print(f"[yeahyoutube] No cookie file found, using fallback: {fallback_cookie}")
+	return fallback_cookie
 
 # ---------------------------------------------------------------------------
 # Subscriptions management
@@ -216,52 +237,87 @@ def import_newpipe_subscriptions(json_data):
 		print(f"[yeahyoutube] Error parsing NewPipe JSON: {e}")
 		return []
 
-def fetch_subscription_videos(channel_id, max_results=5):
+def fetch_subscription_videos(channel_id, channel_name="Unknown", max_results=5):
 	"""
-	Fetch the latest videos from a channel using yt-dlp.
-	Supports both channel IDs (UC...) and handle-based IDs.
+	Fetch the latest videos from a channel using YouTube's RSS feed.
+	No authentication or cookies needed.
+	Only supports channel IDs (UC...).
 	"""
-	# Construct the channel URL
-	if channel_id.startswith("UC"):
-		channel_url = f"https://www.youtube.com/channel/{channel_id}"
-	else:
-		channel_url = f"https://www.youtube.com/@{channel_id}"
+	if not channel_id.startswith("UC"):
+		print(f"[yeahyoutube] RSS feeds only work with channel IDs (UC...), got: {channel_id}")
+		return []
 	
-	ydl_opts = {
-		'verbose': False,
-		'quiet': True,
-		'noplaylist': False,
-		'skip_download': True,
-		'extract_flat': 'in_playlist',
-		'playlistend': max_results,
-		'cookiefile': get_cookie_file(),
-		'js_runtimes': get_js_runtimes(),
-		'remote_components': ['ejs:github'],
-		'extractor_args': {'youtube': {'player-client': ['default','mweb']}}
+	rss_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
+	
+	try:
+		resp = requests.get(rss_url, timeout=15)
+		resp.raise_for_status()
+	except Exception as e:
+		print(f"[yeahyoutube] Error fetching RSS feed for channel {channel_id}: {e}")
+		return []
+	
+	try:
+		root = ET.fromstring(resp.text)
+	except ET.ParseError as e:
+		print(f"[yeahyoutube] Error parsing RSS XML for channel {channel_id}: {e}")
+		return []
+	
+	# RSS feed XML namespace
+	ns = {
+		'atom': 'http://www.w3.org/2005/Atom',
+		'yt': 'http://www.youtube.com/xml/schemas/2015',
+		'media': 'http://search.yahoo.com/mrss/',
 	}
 	
-	with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-		try:
-			info = ydl.extract_info(channel_url, download=False)
-			entries = info.get('entries', [])
-			videos = []
-			for entry in entries:
-				if entry and entry.get('id'):
-					videos.append({
-						'id': entry['id'],
-						'title': entry.get('title', 'Untitled'),
-						'uploader': entry.get('uploader', info.get('uploader', 'Unknown')),
-						'description': entry.get('description', ''),
-						'view_count': entry.get('view_count', 0),
-						'upload_date': entry.get('upload_date', ''),
-					})
-			return videos
-		except Exception as e:
-			print(f"[yeahyoutube] Error fetching videos for channel {channel_id}: {e}")
-			return []
+	entries = root.findall('atom:entry', ns)
+	videos = []
+	
+	for entry in entries[:max_results]:
+		video_id_elem = entry.find('yt:videoId', ns)
+		if video_id_elem is None:
+			continue
+		video_id = video_id_elem.text
+		
+		title_elem = entry.find('atom:title', ns)
+		title = title_elem.text if title_elem is not None else 'Untitled'
+		
+		# Get uploader from the author element
+		author_elem = entry.find('atom:author', ns)
+		uploader = channel_name
+		if author_elem is not None:
+			name_elem = author_elem.find('atom:name', ns)
+			if name_elem is not None and name_elem.text:
+				uploader = name_elem.text
+		
+		# Get description from media:group
+		description = ''
+		media_group = entry.find('media:group', ns)
+		if media_group is not None:
+			desc_elem = media_group.find('media:description', ns)
+			if desc_elem is not None and desc_elem.text:
+				description = desc_elem.text
+		
+		# Parse published date into YYYYMMDD format
+		published_elem = entry.find('atom:published', ns)
+		upload_date = ''
+		if published_elem is not None and published_elem.text:
+			# published format: 2024-01-01T00:00:00+00:00
+			date_part = published_elem.text[:10]  # "2024-01-01"
+			upload_date = date_part.replace('-', '')  # "20240101"
+		
+		videos.append({
+			'id': video_id,
+			'title': title,
+			'uploader': uploader,
+			'description': description,
+			'view_count': 0,  # RSS feed doesn't include view counts
+			'upload_date': upload_date,
+		})
+	
+	return videos
 
 def fetch_all_subscription_videos(max_per_channel=3):
-	"""Fetch latest videos from all subscribed channels."""
+	"""Fetch latest videos from all subscribed channels via RSS feeds."""
 	subs_data = load_subscriptions()
 	subs = subs_data.get("subscriptions", [])
 	
@@ -270,7 +326,7 @@ def fetch_all_subscription_videos(max_per_channel=3):
 		channel_id = sub.get("channel_id", "")
 		name = sub.get("name", "Unknown")
 		if channel_id:
-			videos = fetch_subscription_videos(channel_id, max_per_channel)
+			videos = fetch_subscription_videos(channel_id, name, max_per_channel)
 			all_videos.extend(videos)
 	
 	# Sort by upload date (newest first), handling missing dates
