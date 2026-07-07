@@ -1,11 +1,10 @@
 WEB_SIMULATOR_PROMPT_ADDENDUM=""
 WHITELISTED_DOMAINS = [
 	"weather.gov",
-	"notyoutube.com",
+	"yeahyoutube.com",
 	"reddit.com",
 	"hackaday.com",
 	"npr.org",
-	"archive.org",
 	"web.archive.org",
 	"wikipedia.org",
 	"osn.nodemixaholic.com",
