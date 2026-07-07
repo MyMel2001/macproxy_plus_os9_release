@@ -5,6 +5,7 @@ import random
 import string
 import subprocess
 import shutil
+import time
 from flask import request, send_file, render_template_string
 from urllib.parse import urlparse, parse_qs
 import yt_dlp
@@ -14,6 +15,7 @@ DOMAIN = "youtube.com"
 EXTENSION_DIR = os.path.dirname(os.path.abspath(__file__))
 FLIM_DIRECTORY = os.path.join(EXTENSION_DIR, "flims")
 DOWNLOAD_DIRECTORY = os.path.join(EXTENSION_DIR, "downloads")
+SUBSCRIPTIONS_FILE = os.path.join(EXTENSION_DIR, "subscriptions.json")
 PROFILE = "plus"
 
 # Ensure directories exist
@@ -143,32 +145,177 @@ def get_cookie_file():
 			
 	return prod_cookies # Default back to production path if none exist
 
+# ---------------------------------------------------------------------------
+# Subscriptions management
+# ---------------------------------------------------------------------------
+
+def load_subscriptions():
+	"""Load subscriptions from the local JSON file."""
+	if os.path.exists(SUBSCRIPTIONS_FILE):
+		try:
+			with open(SUBSCRIPTIONS_FILE, "r") as f:
+				return json.load(f)
+		except (json.JSONDecodeError, IOError) as e:
+			print(f"[yeahyoutube] Error loading subscriptions: {e}")
+	return {"subscriptions": []}
+
+def save_subscriptions(data):
+	"""Save subscriptions to the local JSON file."""
+	try:
+		with open(SUBSCRIPTIONS_FILE, "w") as f:
+			json.dump(data, f, indent=2)
+		return True
+	except IOError as e:
+		print(f"[yeahyoutube] Error saving subscriptions: {e}")
+		return False
+
+def import_newpipe_subscriptions(json_data):
+	"""
+	Import subscriptions from a NewPipe-format JSON export.
+	NewPipe format: { "app_version": "...", "app_version_int": ..., "subscriptions": [{"service_id": 0, "url": "...", "name": "..."}, ...] }
+	"""
+	imported = []
+	try:
+		data = json.loads(json_data)
+		subs = data.get("subscriptions", [])
+		for sub in subs:
+			url = sub.get("url", "")
+			name = sub.get("name", "")
+			# Extract channel ID or handle from URL
+			# NewPipe URLs look like: https://www.youtube.com/channel/UC... or https://www.youtube.com/c/Handle
+			channel_id = ""
+			if "/channel/" in url:
+				channel_id = url.split("/channel/")[-1].split("?")[0].split("/")[0]
+			elif "/c/" in url:
+				channel_id = url.split("/c/")[-1].split("?")[0].split("/")[0]
+			elif "/user/" in url:
+				channel_id = url.split("/user/")[-1].split("?")[0].split("/")[0]
+			elif "@" in url:
+				channel_id = url.split("@")[-1].split("?")[0].split("/")[0]
+			
+			if channel_id and name:
+				imported.append({
+					"name": name,
+					"url": url,
+					"channel_id": channel_id,
+					"added": time.strftime("%Y-%m-%d")
+				})
+		
+		if imported:
+			current = load_subscriptions()
+			# Merge, avoiding duplicates by URL
+			existing_urls = {s["url"] for s in current.get("subscriptions", [])}
+			for sub in imported:
+				if sub["url"] not in existing_urls:
+					current.setdefault("subscriptions", []).append(sub)
+					existing_urls.add(sub["url"])
+			save_subscriptions(current)
+		
+		return imported
+	except (json.JSONDecodeError, KeyError) as e:
+		print(f"[yeahyoutube] Error parsing NewPipe JSON: {e}")
+		return []
+
+def fetch_subscription_videos(channel_id, max_results=5):
+	"""
+	Fetch the latest videos from a channel using yt-dlp.
+	Supports both channel IDs (UC...) and handle-based IDs.
+	"""
+	# Construct the channel URL
+	if channel_id.startswith("UC"):
+		channel_url = f"https://www.youtube.com/channel/{channel_id}"
+	else:
+		channel_url = f"https://www.youtube.com/@{channel_id}"
+	
+	ydl_opts = {
+		'verbose': False,
+		'quiet': True,
+		'noplaylist': False,
+		'skip_download': True,
+		'extract_flat': 'in_playlist',
+		'playlistend': max_results,
+		'cookiefile': get_cookie_file(),
+		'js_runtimes': get_js_runtimes(),
+		'remote_components': ['ejs:github'],
+		'extractor_args': {'youtube': {'player-client': ['default','mweb']}}
+	}
+	
+	with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+		try:
+			info = ydl.extract_info(channel_url, download=False)
+			entries = info.get('entries', [])
+			videos = []
+			for entry in entries:
+				if entry and entry.get('id'):
+					videos.append({
+						'id': entry['id'],
+						'title': entry.get('title', 'Untitled'),
+						'uploader': entry.get('uploader', info.get('uploader', 'Unknown')),
+						'description': entry.get('description', ''),
+						'view_count': entry.get('view_count', 0),
+						'upload_date': entry.get('upload_date', ''),
+					})
+			return videos
+		except Exception as e:
+			print(f"[yeahyoutube] Error fetching videos for channel {channel_id}: {e}")
+			return []
+
+def fetch_all_subscription_videos(max_per_channel=3):
+	"""Fetch latest videos from all subscribed channels."""
+	subs_data = load_subscriptions()
+	subs = subs_data.get("subscriptions", [])
+	
+	all_videos = []
+	for sub in subs:
+		channel_id = sub.get("channel_id", "")
+		name = sub.get("name", "Unknown")
+		if channel_id:
+			videos = fetch_subscription_videos(channel_id, max_per_channel)
+			all_videos.extend(videos)
+	
+	# Sort by upload date (newest first), handling missing dates
+	def sort_key(v):
+		return v.get('upload_date', '00000000')
+	all_videos.sort(key=sort_key, reverse=True)
+	
+	return all_videos
+
+# ---------------------------------------------------------------------------
+# HTML generation
+# ---------------------------------------------------------------------------
+
 def generate_homepage():
+	"""Generate the main homepage with search, subscriptions link, and settings."""
 	return render_template_string('''
-	<!DOCTYPE html>
-	<html lang="en">
+	<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+	<html>
 		<head>
-			<meta charset="UTF-8">
+			<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
 			<title>Yeah! YouTube - Broadcast Yourself</title>
 		</head>
 		<body>
 			<center>
 <pre>
-                                                   
-  ##      ##         ########     ##               
-   ##    ##             ##        ##               
-    ##  ## ####  ##  ## ## ##  ## #####   ####     
-     #### ##  ## ##  ## ## ##  ## ##  ## ##  ##    
-      ##  ##  ## ##  ## ## ##  ## ##  ## ######    
-      ##  ##  ## ##  ## ## ##  ## ##  ## ##        
-YEAH! ##   ####   ##### ##  ##### #####   #####    
+                                                    
+  ##      ##         ########     ##
+   ##    ##             ##        ##
+    ##  ## ####  ##  ## ## ##  ## #####   ####
+     #### ##  ## ##  ## ## ##  ## ##  ## ##  ##
+      ##  ##  ## ##  ## ## ##  ## ##  ## ######
+      ##  ##  ## ##  ## ## ##  ## ##  ## ##
+YEAH! ##   ####   ##### ##  ##### #####   #####
 <br>
 </pre>
 				<form method="get" action="/results">
-					<input type="text" size="40" name="search_query" required style="font-size: 42px;">
+					<input type="text" size="40" name="search_query">
 					<input type="submit" value="Search">
 				</form>
 				<br>
+				<font size="3">
+					<a href="/subscriptions">[My Subscriptions]</a>
+					&nbsp;&nbsp;
+					<a href="/settings">[Settings]</a>
+				</font>
 			</center>
 			<hr>
 		</body>
@@ -178,15 +325,15 @@ YEAH! ##   ####   ##### ##  ##### #####   #####
 def generate_search_results(search_results, query):
 	videos_html = generate_search_results_html(search_results)
 	return render_template_string('''
-	<!DOCTYPE html>
-	<html lang="en">
+	<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+	<html>
 		<head>
-			<meta charset="UTF-8">
+			<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
 			<title>Yeah! YouTube - Search Results for {{ query }}</title>
 		</head>
 		<body>
 			<form method="get" action="/results">
-				<input type="text" size="40" name="search_query" value="{{ query }}" required style="font-size: 16px;">
+				<input type="text" size="40" name="search_query" value="{{ query }}">
 				<input type="submit" value="Search">
 			</form>
 			<hr>
@@ -224,6 +371,163 @@ def generate_search_results_html(videos):
 		<br><br>
 		'''
 	return html
+
+def generate_subscriptions_page(videos, subscriptions):
+	"""Generate the subscriptions page showing latest videos from subscribed channels."""
+	html = '''<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<title>Yeah! YouTube - My Subscriptions</title>
+</head>
+<body>
+<center><h1>My Subscriptions</h1></center>
+<hr>
+<font size="2"><a href="/">[Back to Home]</a> | <a href="/settings">[Settings]</a></font>
+<br><br>
+'''
+
+	if not subscriptions:
+		html += '<p>No subscriptions yet. Go to <a href="/settings">Settings</a> to import your NewPipe subscriptions.</p>\n'
+		html += '</body>\n</html>'
+		return html
+
+	# Show subscribed channels
+	html += '<b>Subscribed Channels:</b><br>\n'
+	for sub in subscriptions:
+		name = sub.get("name", "Unknown")
+		url = sub.get("url", "")
+		html += f'<font size="2">- <a href="{url}">{name}</a></font><br>\n'
+	html += '<br><hr>\n'
+
+	# Show latest videos
+	if videos:
+		html += '<b>Latest Videos:</b><br><br>\n'
+		for video in videos:
+			video_id = video.get('id')
+			if not video_id:
+				continue
+			video_url = f"https://www.{DOMAIN}/watch?v={video_id}"
+			title = video.get('title', 'Untitled')
+			creator = video.get('uploader', 'Unknown')
+			upload_date = video.get('upload_date', '')
+			view_count = video.get('view_count', 0)
+
+			# Format date from YYYYMMDD to YYYY-MM-DD
+			formatted_date = upload_date
+			if len(upload_date) == 8:
+				formatted_date = f"{upload_date[:4]}-{upload_date[4:6]}-{upload_date[6:8]}"
+
+			html += f'''
+<b><a href="{video_url}">{title}</a></b><br>
+<font size="2">
+<b>{creator}</b> | {formatted_date} | {view_count} views<br>
+</font>
+<br>
+'''
+	else:
+		html += '<p>No videos found from your subscriptions. They may not have uploaded recently.</p>\n'
+
+	html += '<hr>\n'
+	html += '<center><font size="2">Yeah! YouTube - Subscriptions</font></center>\n'
+	html += '</body>\n</html>'
+	return html
+
+def generate_settings_page():
+	"""Generate the settings page with NewPipe JSON import form."""
+	html = '''<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<title>Yeah! YouTube - Settings</title>
+</head>
+<body>
+<center><h1>Settings</h1></center>
+<hr>
+<font size="2"><a href="/">[Back to Home]</a> | <a href="/subscriptions">[My Subscriptions]</a></font>
+<br><br>
+'''
+
+	# Show current subscriptions count
+	subs_data = load_subscriptions()
+	subs = subs_data.get("subscriptions", [])
+	html += f'<b>Current Subscriptions:</b> {len(subs)} channel(s)<br>\n'
+	if subs:
+		html += '<ul>\n'
+		for sub in subs:
+			html += f'<li><font size="2">{sub.get("name", "Unknown")}</font></li>\n'
+		html += '</ul>\n'
+	html += '<br>\n'
+
+	# Import form - uses a simple form with a textarea for pasting NewPipe JSON
+	html += '''<b>Import NewPipe Subscriptions:</b><br>
+<font size="2">
+Paste the contents of your NewPipe subscriptions export JSON file below.<br>
+The file can be exported from NewPipe via Settings > Content > Export subscriptions.<br>
+</font>
+<br>
+<form method="post" action="/import_subscriptions">
+<textarea name="newpipe_json" rows="15" cols="60" wrap="off"></textarea>
+<br><br>
+<input type="submit" value="Import Subscriptions">
+</form>
+<br>
+<hr>
+<font size="2">
+<b>How to export from NewPipe:</b><br>
+1. Open NewPipe on your Android device<br>
+2. Go to Settings > Content<br>
+3. Tap "Export subscriptions"<br>
+4. Share or save the .json file<br>
+5. Open the file in a text editor, copy all the text<br>
+6. Paste it into the text area above and click Import<br>
+</font>
+<br>
+<hr>
+<center><font size="2">Yeah! YouTube - Settings</font></center>
+</body>
+</html>'''
+	return html
+
+def generate_import_result_page(imported_count, failed=False):
+	"""Generate the import result page."""
+	if failed:
+		html = '''<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<title>Yeah! YouTube - Import Failed</title>
+</head>
+<body>
+<center><h1>Import Failed</h1></center>
+<hr>
+<p>Could not parse the provided JSON. Please ensure you are pasting a valid NewPipe subscriptions export file.</p>
+<br>
+<a href="/settings">[Back to Settings]</a>
+</body>
+</html>'''
+	else:
+		html = f'''<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<title>Yeah! YouTube - Import Successful</title>
+</head>
+<body>
+<center><h1>Import Successful</h1></center>
+<hr>
+<p>Successfully imported {imported_count} subscription(s).</p>
+<br>
+<a href="/subscriptions">[View My Subscriptions]</a>
+<br>
+<a href="/settings">[Back to Settings]</a>
+</body>
+</html>'''
+	return html
+
+# ---------------------------------------------------------------------------
+# Video operations
+# ---------------------------------------------------------------------------
 
 def handle_video_request(video_id):
 	# Download the video using yt-dlp
@@ -301,6 +605,10 @@ def search_videos(query):
 			print(f"Error searching youtube: {e}")
 			return []
 
+# ---------------------------------------------------------------------------
+# Main request handler
+# ---------------------------------------------------------------------------
+
 def handle_request(req):
 	parsed_url = urlparse(req.url)
 	path = parsed_url.path
@@ -309,9 +617,30 @@ def handle_request(req):
 	if path == "/watch" and 'v' in query_params:
 		video_id = query_params['v'][0]
 		return handle_video_request(video_id)
+	
 	elif path == "/results" and 'search_query' in query_params:
 		query = query_params['search_query'][0]
 		search_results = search_videos(query)
 		return generate_search_results(search_results, query), 200
+	
+	elif path == "/subscriptions":
+		subs_data = load_subscriptions()
+		subs = subs_data.get("subscriptions", [])
+		videos = fetch_all_subscription_videos(max_per_channel=3)
+		return generate_subscriptions_page(videos, subs), 200
+	
+	elif path == "/settings":
+		return generate_settings_page(), 200
+	
+	elif path == "/import_subscriptions" and req.method == "POST":
+		newpipe_json = req.form.get("newpipe_json", "")
+		if not newpipe_json.strip():
+			return generate_import_result_page(0, failed=True), 400
+		imported = import_newpipe_subscriptions(newpipe_json)
+		if imported:
+			return generate_import_result_page(len(imported)), 200
+		else:
+			return generate_import_result_page(0, failed=True), 400
+	
 	else:
 		return generate_homepage(), 200
