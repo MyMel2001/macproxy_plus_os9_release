@@ -11,7 +11,10 @@ WHITELISTED_DOMAINS = [
 	"www.macintoshrepository.org",
 	"ai.nodemixaholic.com",
 	"youtube.com",
-    "websimulator.ai"
+	"websimulator.ai",
+	"github.com",
+	"bluesky.nodemixaholic.com",
+	"osn.nodemixaholic.com"
 ]
 ZIP_CODE = 75602
 ENABLED_EXTENSIONS = [
@@ -20,12 +23,24 @@ ENABLED_EXTENSIONS = [
 	"hackaday",
 	"weather",
 	"npr",
-	"notyoutube-os9",
 	"wikipedia",
 	"samantha",
 	"yeahyoutube",
-	"samantha-websimulator"
+	"samantha-websimulator",
+	"github"
 ]
+
+# GitHub extension: list of GitHub usernames whose repos will be shown
+GITHUB_USERS = [
+	# "torvalds",
+	# "octocat",
+	"Automeltic",
+	"MyMel2001",
+	"mymel2001-holder"
+]
+
+# YouTube subscriptions file path (NewPipe JSON format)
+# YOUTUBE_SUBSCRIPTIONS_FILE = "/path/to/newpipe_subscriptions.json"
 SIMPLIFY_HTML=True
 TAGS_TO_UNWRAP=["h1","h2","h3","h4","h5","h6",'b','p','i',"em","strong"]
 TAGS_TO_STRIP=["script","style","meta"]
