@@ -645,23 +645,21 @@ def transcode_video(video_id):
 		print(f"[yeahyoutube] Failed to download video {video_id}")
 		return None
 
-	# MJPEG is the fastest software encoder for QuickTime 5 compatibility.
-	# It's a simple intra-frame DCT codec - no motion estimation needed.
-	# At 480x360 15fps the file size is manageable.
 	ffmpeg_cmd = [
-		"ffmpeg", "-y",
-		"-i", downloaded_video_path,
-		"-f", "mov",
-		"-movflags", "faststart",
-		"-vcodec", "mjpeg",
-		"-q:v", "5",  # MJPEG quality (lower = better, 2-31 scale)
-		"-acodec", "adpcm_ima_qt",
-		"-ar", "22050",
-		"-ac", "1",
-		"-b:a", "16k",
-		"-vf", "scale=480:360",
-		"-r", "15",
-		flim_path
+		"ffmpeg",
+			"-n", # dont overwrite output file if it exists
+			"-i", downloaded_video_path,
+			"-f", "mov",
+			"-vcodec", "svq1",  # Sorenson Video codec (better Mac OS 9 compatibility)
+			"-acodec", "adpcm_ima_qt",  # ADPCM audio (better Mac OS 9 compatibility)
+			"-ar", "11025",  # Lower audio sample rate
+			"-ac", "1",  # Mono audio
+			"-vf", "scale=300:225",  # Lower resolution for Mac OS 9
+			"-r", "12",  # Lower frame rate for 56k
+			"-b:v", "74k",  # Very low bitrate for 56k
+			"-b:a", "4k",  # Low audio bitrate
+			"-q:v", "5",  # Slightly lower quality
+			flim_path
 	]
 	
 	print(f"[yeahyoutube] FFmpeg command: {' '.join(ffmpeg_cmd)}")
@@ -673,17 +671,19 @@ def transcode_video(video_id):
 		# Fallback: try SVQ1
 		print("[yeahyoutube] Trying SVQ1 fallback...")
 		ffmpeg_cmd = [
-			"ffmpeg", "-y",
+			"ffmpeg",
+			"-n", # dont overwrite output file if it exists
 			"-i", downloaded_video_path,
 			"-f", "mov",
-			"-movflags", "faststart",
-			"-vcodec", "svq1",
-			"-acodec", "adpcm_ima_qt",
-			"-ar", "22050",
-			"-ac", "1",
-			"-b:a", "16k",
-			"-vf", "scale=480:360",
-			"-r", "15",
+			"-vcodec", "svq1",  # Sorenson Video codec (better Mac OS 9 compatibility)
+			"-acodec", "adpcm_ima_qt",  # ADPCM audio (better Mac OS 9 compatibility)
+			"-ar", "11025",  # Lower audio sample rate
+			"-ac", "1",  # Mono audio
+			"-vf", "scale=300:225",  # Lower resolution for Mac OS 9
+			"-r", "12",  # Lower frame rate for 56k
+			"-b:v", "74k",  # Very low bitrate for 56k
+			"-b:a", "4k",  # Low audio bitrate
+			"-q:v", "5",  # Slightly lower quality
 			flim_path
 		]
 		result = subprocess.run(ffmpeg_cmd, capture_output=True, text=True)
