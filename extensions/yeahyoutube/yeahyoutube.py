@@ -1,5 +1,6 @@
 
 import os
+import sys
 import json
 import random
 import string
@@ -10,6 +11,7 @@ import xml.etree.ElementTree as ET
 from flask import request, send_file, render_template_string, Response, abort
 from urllib.parse import urlparse, parse_qs
 import requests
+import yt_dlp
 import config
 
 DOMAIN = "youtube.com"
@@ -599,21 +601,41 @@ def transcode_video(video_id):
 		print(f"[yeahyoutube] Cache hit for video {video_id}")
 		return flim_path
 	
-	video_url = f"https://invidious.nerdvpn.de/watch?v={video_id}"
+	# Use yewtu.be for downloading (invidious instance bypasses some restrictions)
+	video_url = f"https://yewtu.be/watch?v={video_id}"
 	
 	ydl_opts = {
 		'outtmpl': os.path.join(DOWNLOAD_DIRECTORY, f"{video_id}.%(ext)s"),
 		'noplaylist': True,
+		'quiet': False,
 		'verbose': True,
+		'cookiefile': get_cookie_file(),
 		'js_runtimes': get_js_runtimes(),
 		'remote_components': ['ejs:github'],
+		'format': 'best[ext=mp4]/best',
 	}
+
+	print(f"[yeahyoutube] Starting download for video_id: {video_id}")
+	print(f"[yeahyoutube] Video URL: {video_url}")
 
 	downloaded_video_path = None
 	with yt_dlp.YoutubeDL(ydl_opts) as ydl:
 		try:
 			info_dict = ydl.extract_info(video_url, download=True)
-			downloaded_video_path = ydl.prepare_filename(info_dict)
+			# Determine the actual downloaded file path from the template and extension
+			if info_dict is None:
+				print(f"[yeahyoutube] extract_info returned None for video {video_id}")
+				return None
+			# Use prepare_filename to get the template path, then find the actual file
+			template_path = ydl.prepare_filename(info_dict)
+			if template_path and os.path.exists(template_path):
+				downloaded_video_path = template_path
+			else:
+				# Fallback: search for any file in DOWNLOAD_DIRECTORY starting with video_id
+				for f in os.listdir(DOWNLOAD_DIRECTORY):
+					if f.startswith(video_id) and not f.endswith('.part'):
+						downloaded_video_path = os.path.join(DOWNLOAD_DIRECTORY, f)
+						break
 		except Exception as e:
 			print(f"[yeahyoutube] Error downloading video: {e}")
 			return None
@@ -662,9 +684,11 @@ def stream_video(video_id):
 	Serve a transcoded .mov file with HTTP Range support for QuickTime
 	progressive download (streaming).
 	"""
+	print(f"[yeahyoutube] stream_video called with video_id: {video_id}")
 	flim_path = transcode_video(video_id)
 	if not flim_path:
-		return abort(500, "Error: Failed to transcode video")
+		abort(500, "Error: Failed to transcode video")
+		return
 	
 	file_size = os.path.getsize(flim_path)
 	
@@ -673,10 +697,19 @@ def stream_video(video_id):
 	
 	if range_header:
 		# Parse the Range header: "bytes=<start>-<end>"
-		byte_range = range_header.strip().split('bytes=')[1]
-		range_start, range_end = byte_range.split('-')
-		range_start = int(range_start) if range_start else 0
-		range_end = int(range_end) if range_end else file_size - 1
+		try:
+			if '=' in range_header:
+				byte_range = range_header.strip().split('bytes=')[1]
+			else:
+				byte_range = range_header.strip()
+			
+			range_parts = byte_range.split('-')
+			range_start = int(range_parts[0]) if range_parts[0] else 0
+			range_end = int(range_parts[1]) if range_parts[1] else file_size - 1
+		except (IndexError, ValueError):
+			# Invalid Range header, return full file
+			range_start = 0
+			range_end = file_size - 1
 		
 		# If no end was specified, send from start to end of file
 		if range_end >= file_size:
@@ -701,13 +734,23 @@ def stream_video(video_id):
 		)
 		return response
 	else:
-		# No Range header - send the entire file
-		return send_file(
-			flim_path,
+		# No Range header - send the entire file.
+		# QuickTime on Mac OS 9 needs Accept-Ranges: bytes to know it can
+		# perform progressive download (HTTP Range requests). Without this
+		# header, QuickTime shows its logo but never attempts to stream.
+		with open(flim_path, 'rb') as f:
+			data = f.read()
+		
+		response = Response(
+			data,
+			status=200,
 			mimetype='video/quicktime',
-			as_attachment=False,  # Do NOT force download - let the browser/QuickTime handle it
-			download_name=f"{video_id}.mov"
+			headers={
+				'Content-Length': str(file_size),
+				'Accept-Ranges': 'bytes',
+			}
 		)
+		return response
 
 
 def generate_watch_page(video_id, video_info=None):
@@ -729,8 +772,8 @@ def generate_watch_page(video_id, video_info=None):
 	else:
 		formatted_description = ""
 	
-	# Stream URL - use the youtube.com domain so the proxy routes it through this extension
-	stream_url = f"https://www.{DOMAIN}/stream/{video_id}.mov"
+	# Stream URL - use a relative path so the proxy intercepts it
+	stream_url = f"/stream/{video_id}.mov"
 	
 	html = f'''<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
 <html>
@@ -764,8 +807,9 @@ def generate_watch_page(video_id, video_info=None):
 def fetch_video_info(video_id):
 	"""
 	Fetch metadata for a single video using yt-dlp (without downloading).
+	Uses youtube.com for info extraction (yt-dlp will handle challenges).
 	"""
-	video_url = f"https://invidious.nerdvpn.de/watch?v={video_id}"
+	video_url = f"https://www.youtube.com/watch?v={video_id}"
 	
 	ydl_opts = {
 		'verbose': False,
@@ -823,9 +867,12 @@ def handle_request(req):
 	path = parsed_url.path
 	query_params = parse_qs(parsed_url.query)
 
+	print(f"[yeahyoutube] handle_request: path={path}, query_params={query_params}")
+
 	# /watch?v=ID - Show the watch page with embedded QuickTime player
 	if path == "/watch" and 'v' in query_params:
 		video_id = query_params['v'][0]
+		print(f"[yeahyoutube] Watch request for video_id: {video_id}")
 		# Fetch video info for the watch page
 		video_info = fetch_video_info(video_id)
 		return generate_watch_page(video_id, video_info), 200
@@ -833,6 +880,7 @@ def handle_request(req):
 	# /stream/ID.mov - Stream the transcoded video with Range support
 	elif path.startswith("/stream/") and path.endswith(".mov"):
 		video_id = path[len("/stream/"):-len(".mov")]
+		print(f"[yeahyoutube] Stream request for video_id: {video_id}")
 		if not video_id:
 			return "Error: No video ID specified", 400
 		return stream_video(video_id)
@@ -863,3 +911,4 @@ def handle_request(req):
 	
 	else:
 		return generate_homepage(), 200
+
