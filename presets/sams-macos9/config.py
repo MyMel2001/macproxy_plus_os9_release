@@ -14,6 +14,7 @@ WHITELISTED_DOMAINS = [
 	"websimulator.ai",
 	"github.com",
 	"bluesky.nodemixaholic.com",
+	"bsky.nodemixaholic.com",
 	"osn.nodemixaholic.com"
 ]
 ZIP_CODE = 75602
@@ -43,7 +44,7 @@ GITHUB_USERS = [
 # YOUTUBE_SUBSCRIPTIONS_FILE = "/path/to/newpipe_subscriptions.json"
 SIMPLIFY_HTML=True
 TAGS_TO_UNWRAP=["h1","h2","h3","h4","h5","h6",'b','p','i',"em","strong"]
-TAGS_TO_STRIP=["script","style","meta"]
+TAGS_TO_STRIP=["script","meta"]
 ATTRIBUTES_TO_STRIP=["style","onclick","class","bgcolor","text","link","vlink"]
 CONVERT_CHARACTERS=True
 CONVERSION_TABLE = {
