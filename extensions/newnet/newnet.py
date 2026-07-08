@@ -34,20 +34,37 @@ _BACKGROUND_LOOP = None
 # Pure thread-safe thread queue to hold MP3 bytes generated straight from inside Chromium
 AUDIO_QUEUE = queue.Queue(maxsize=5000)
 
+# --- BACKGROUND LOOP & TICKER SECTION ---
+
 def _start_background_loop():
-	global _BACKGROUND_LOOP
-	_BACKGROUND_LOOP = asyncio.new_event_loop()
-	asyncio.set_event_loop(_BACKGROUND_LOOP)
-	_BACKGROUND_LOOP.run_forever()
+    global _BACKGROUND_LOOP
+    _BACKGROUND_LOOP = asyncio.new_event_loop()
+    asyncio.set_event_loop(_BACKGROUND_LOOP)
+    
+    # Schedule our live continuous screen grabber task
+    _BACKGROUND_LOOP.create_task(_live_screenshot_ticker())
+    
+    _BACKGROUND_LOOP.run_forever()
 
 def get_background_loop():
-	global _BACKGROUND_LOOP
-	if _BACKGROUND_LOOP is None:
-		t = threading.Thread(target=_start_background_loop, daemon=True)
-		t.start()
-		while _BACKGROUND_LOOP is None:
-			time.sleep(0.01)
-	return _BACKGROUND_LOOP
+    global _BACKGROUND_LOOP
+    if _BACKGROUND_LOOP is None:
+        t = threading.Thread(target=_start_background_loop, daemon=True)
+        t.start()
+        while _BACKGROUND_LOOP is None:
+            time.sleep(0.01)
+    return _BACKGROUND_LOOP
+
+async def _live_screenshot_ticker():
+    """Continuously captures the browser viewport at a smooth frame rate."""
+    global _LATEST_FRAME_BYTES
+    while True:
+        try:
+            if _PERSISTENT_PAGE:
+                _LATEST_FRAME_BYTES = await _PERSISTENT_PAGE.screenshot(type="jpeg", quality=60)
+        except Exception:
+            pass
+        await asyncio.sleep(0.066) # ~15 FPS
 
 async def _init_persistent_browser():
 	global _PERSISTENT_PAGE
@@ -183,7 +200,8 @@ async def _interact_persistent_async(x, y, keystrokes=None):
 			for char in keystrokes:
 				await _PERSISTENT_PAGE.keyboard.type(char)
 				await asyncio.sleep(random.uniform(0.04, 0.12))
-			await _PERSISTENT_PAGE.keyboard.press("Enter")
+            # We don't want to auto-press enter in some cases (such as site login)
+			# await _PERSISTENT_PAGE.keyboard.press("Enter")
 		await _PERSISTENT_PAGE.wait_for_timeout(400)
 		await _update_state_and_map()
 	except Exception as e: print(f"Interact error: {e}")
@@ -211,6 +229,14 @@ def build_streaming_viewport(links, input_focus_coords=None):
 	html += '  <form action="/newnet-navigate" method="POST" style="margin:0;">\n'
 	html += f'  <b>Remote Address:</b> <input type="text" name="nav_url" value="{CURRENT_URL}" size="50"> <input type="submit" value="Go">\n'
 	html += '  </form>\n</td></tr>\n'
+	html += '<td align="center" nowrap>\n'
+	html += f'  <b>Scroll:</b> \n'
+	html += f'  [<a href="/newnet-scroll?dir=up&cb={cb}">Up</a>]\n'
+	html += f'  [<a href="/newnet-scroll?dir=down&cb={cb}">Down</a>]\n'
+	html += f'  [<a href="/newnet-scroll?dir=left&cb={cb}">Left</a>]\n'
+	html += f'  [<a href="/newnet-scroll?dir=right&cb={cb}">Right</a>]\n'
+	html += '</td>\n'
+	html += '</tr>\n'
 	if input_focus_coords:
 		html += f'<tr bgcolor="#FFFFD0"><td><form action="/newnet-send-keystrokes" method="POST" style="margin:0;"><input type="hidden" name="x" value="{input_focus_coords[0]}"><input type="hidden" name="y" value="{input_focus_coords[1]}"><b>Text Input:</b> <input type="text" name="typed_text" size="40"> <input type="submit" value="Type"></form></td></tr>\n'
 	html += '</table><br>\n'
@@ -245,9 +271,32 @@ def handle_request(req):
 		return build_streaming_viewport(_LATEST_MAP_LINKS, focus_coords), 200
 
 	if path == "/newnet-frame.jpg":
-		if not _LATEST_FRAME_BYTES: sync_get_latest()
-		resp = Response(_LATEST_FRAME_BYTES, mimetype="image/jpeg")
+		def frame_stream_generator():
+			global _LATEST_FRAME_BYTES
+			last_sent_frame = b""
+			
+			try:
+				while True:
+					# 1. Only yield if a brand new frame has been generated in the background
+					if _LATEST_FRAME_BYTES and _LATEST_FRAME_BYTES != last_sent_frame:
+						last_sent_frame = _LATEST_FRAME_BYTES
+						
+						yield (b'--frame\r\n'
+						       b'Content-Type: image/jpeg\r\n'
+						       b'Content-Length: ' + str(len(last_sent_frame)).encode() + b'\r\n\r\n' + 
+						       last_sent_frame + b'\r\n')
+					
+					# 2. Yield control to match rendering cycle and avoid CPU exhaustion
+					time.sleep(0.05)
+			except (GeneratorExit, Exception):
+				# CRITICAL FIX: This catches when the browser drops the connection 
+				# (e.g., during a click or page navigation) and kills this thread.
+				return
+
+		resp = Response(frame_stream_generator(), mimetype="multipart/x-mixed-replace; boundary=frame")
 		resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+		resp.headers["Pragma"] = "no-cache"
+		resp.headers["Expires"] = "0"
 		return resp
 
 	if path == "/newnet-audio.mp3":
@@ -280,6 +329,29 @@ def handle_request(req):
 			except: pass
 		if x is not None and y is not None: sync_interact(x, y)
 		return '<html><head><meta http-equiv="refresh" content="0;url=/newnet-render"></head><body>Clicking...</body></html>', 200
+
+    # --- NEW SCROLLING ENDPOINT ROUTE ---
+	if path == "/newnet-scroll":
+		direction = query_params.get("dir", ["down"])[0]
+		
+		scroll_x, scroll_y = 0, 0
+		if direction == "up": scroll_y = -400
+		elif direction == "down": scroll_y = 400
+		elif direction == "left": scroll_x = -200
+		elif direction == "right": scroll_x = 200
+		
+		async def _perform_scroll():
+			if _PERSISTENT_PAGE:
+				try:
+					await _PERSISTENT_PAGE.evaluate(f"window.scrollBy({scroll_x}, {scroll_y})")
+					await _update_state_and_map()
+				except Exception as e:
+					print(f"Scroll error: {e}")
+					
+		future = asyncio.run_coroutine_threadsafe(_perform_scroll(), get_background_loop())
+		future.result()
+		
+		return '<html><head><meta http-equiv="refresh" content="0;url=/newnet-render"></head><body>Scrolling...</body></html>', 200
 
 	if path == "/newnet-send-keystrokes" and req.method == "POST":
 		x, y = int(request.form.get("x", 0)), int(request.form.get("y", 0))
