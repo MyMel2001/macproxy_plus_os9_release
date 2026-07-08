@@ -55,7 +55,19 @@ def handle_request(req):
 			location = DEFAULT_LOCATION
 		
 		try:
-			# URL encode the location string
+			# Safety check: If location is bytes, decode it. 
+			# Mac OS 9/IE5 typically uses MacRoman or Latin-1, fallback to UTF-8.
+			if isinstance(location, bytes):
+				try:
+					location = location.decode('mac_roman')
+				except UnicodeDecodeError:
+					location = location.decode('utf-8', errors='ignore')
+			else:
+				# If it's already a string but was wrongly decoded elsewhere,
+				# ensure it's a standard string type.
+				location = str(location)
+
+			# URL encode the location string safely
 			encoded_location = urllib.parse.quote(location)
 			full_url = base_url + encoded_location
 			
