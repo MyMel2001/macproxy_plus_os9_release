@@ -1,9 +1,9 @@
 # MacProxy Plus (Sam's macOS 9 Mod)
 An extensible HTTP proxy that connects early computers to the Internet.
 
-This fork of MacProxy Plus that is optimized for use in macOS 9.2.2 Internet Explorer.
+This fork of MacProxy Plus that is optimized for use in macOS 9.2.2 Internet Explorer. For non-OS9 platforms, this is a nice way to have a less "toxic" internet experience - albeit this isn't really the "supported goal" of this platform, but I've tested it and from what little I've seen it *is* possible.
 
-***NOTE: The ZIP code in my sample config is NOT my zip code, but one that is "close enough" for my weather use.***
+***NOTE: The ZIP code in my sample config is NOT my zip code, but one that is "close enough" for my weather use. Don't worry.***
 
 ### Demonstration Video of Original Project (on YouTube)
 
