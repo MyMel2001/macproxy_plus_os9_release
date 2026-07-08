@@ -41,7 +41,7 @@ HTML_TEMPLATE = """
 <body>
 	<form method="post" action="/">
 		<select id="model" name="model">
-			<option value="StableRouting" {{ 'selected' if selected_model == 'StableRouting' else '' }}>Samantha 4 Combo (Small)</option>
+			<option value="StableRouting" {{ 'selected' if selected_model == 'StableRouting' else '' }}>Samantha (Stable/SpecialRouter)</option>
 		</select>
 		<input type="text" size="63" name="command" required autocomplete="off">
 		<input type="submit" value="Submit">
