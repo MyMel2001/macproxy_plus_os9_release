@@ -820,7 +820,7 @@ def generate_watch_page(video_id, video_info=None):
 <br>
 <b>{creator}</b>
 <br><br>
-<embed src="{stream_url}" type="video/quicktime" width="300" height="225" autoplay="true" controller="true" pluginspage="http://www.apple.com/quicktime/download/">
+<a href="{stream_url}">Click to download</a>
 <br><br>
 <font size="2">
 <a href="/">[Back to Home]</a>
