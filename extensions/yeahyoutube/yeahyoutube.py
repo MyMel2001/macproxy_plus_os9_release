@@ -587,34 +587,14 @@ def generate_import_result_page(imported_count, failed=False):
 # Video operations - Streaming instead of download
 # ---------------------------------------------------------------------------
 
-def detect_hwaccel_decode():
-	"""
-	Detect available hardware acceleration for video *decoding*.
-	Returns hwaccel args list for ffmpeg input.
-	"""
-	try:
-		result = subprocess.run(
-			["ffmpeg", "-hide_banner", "-hwaccels"],
-			capture_output=True, text=True, timeout=5
-		)
-		hwaccels = result.stdout.lower()
-		if "videotoolbox" in hwaccels:
-			print("[yeahyoutube] Using VideoToolbox for hardware-accelerated decoding")
-			return ["-hwaccel", "videotoolbox"]
-	except Exception:
-		pass
-	print("[yeahyoutube] Software decoding only")
-	return []
-
-
 def transcode_video(video_id):
 	"""
 	Download a YouTube video and transcode it to a QuickTime-compatible .mov file
 	for progressive download / streaming on Mac OS 9 browsers.
 	
-	Uses Cinepak codec which is natively supported by QuickTime 5 on Mac OS 9
-	and encodes significantly faster than SVQ1 in software.
-	Hardware-accelerated decoding (VideoToolbox) is used for the input.
+	Uses MJPEG (Motion JPEG) for video - encodes extremely fast since it's a
+	simple intra-frame codec, and is natively supported by QuickTime 5 on Mac OS 9.
+	Uses ADPCM IMA QuickTime for audio (native QT5).
 	
 	Returns the path to the transcoded .mov file, or None on failure.
 	"""
@@ -624,9 +604,6 @@ def transcode_video(video_id):
 	if os.path.exists(flim_path):
 		print(f"[yeahyoutube] Cache hit for video {video_id}")
 		return flim_path
-	
-	# Detect hardware acceleration for decoding
-	hwaccel_args = detect_hwaccel_decode()
 	
 	# Use youtube.com directly for downloading
 	video_url = f"https://www.youtube.com/watch?v={video_id}"
@@ -668,16 +645,16 @@ def transcode_video(video_id):
 		print(f"[yeahyoutube] Failed to download video {video_id}")
 		return None
 
-	# Build FFmpeg command
-	# Use Cinepak for video (native QuickTime 5, much faster encode than SVQ1)
-	# Use ADPCM IMA QuickTime for audio (native QT5)
+	# MJPEG is the fastest software encoder for QuickTime 5 compatibility.
+	# It's a simple intra-frame DCT codec - no motion estimation needed.
+	# At 480x360 15fps the file size is manageable.
 	ffmpeg_cmd = [
 		"ffmpeg", "-y",
-	] + hwaccel_args + [
 		"-i", downloaded_video_path,
 		"-f", "mov",
 		"-movflags", "faststart",
-		"-vcodec", "cinepak",
+		"-vcodec", "mjpeg",
+		"-q:v", "5",  # MJPEG quality (lower = better, 2-31 scale)
 		"-acodec", "adpcm_ima_qt",
 		"-ar", "22050",
 		"-ac", "1",
@@ -692,12 +669,11 @@ def transcode_video(video_id):
 	result = subprocess.run(ffmpeg_cmd, capture_output=True, text=True)
 	
 	if result.returncode != 0:
-		print(f"[yeahyoutube] Cinepak encode error: {result.stderr}")
-		# Fallback: try SVQ1 (slower but better quality)
+		print(f"[yeahyoutube] MJPEG encode error: {result.stderr}")
+		# Fallback: try SVQ1
 		print("[yeahyoutube] Trying SVQ1 fallback...")
 		ffmpeg_cmd = [
 			"ffmpeg", "-y",
-		] + hwaccel_args + [
 			"-i", downloaded_video_path,
 			"-f", "mov",
 			"-movflags", "faststart",
