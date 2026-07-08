@@ -3,12 +3,12 @@ from openai import OpenAI
 import config
 
 # Initialize the OpenAI client with your API key
-client = OpenAI(base_url="http:/100.118.11.83:5481/v1", api_key="x")
+client = OpenAI(base_url="http://100.118.11.83:11434/v1", api_key="x")
 
 DOMAIN = "ai.nodemixaholic.com"
 
 messages = []
-selected_model = "StableRouting"
+selected_model = "sparksammy/samantha-combo-3-small:latest"
 previous_model = selected_model
 
 system_prompts = [
@@ -41,7 +41,7 @@ HTML_TEMPLATE = """
 <body>
 	<form method="post" action="/">
 		<select id="model" name="model">
-			<option value="StableRouting" {{ 'selected' if selected_model == 'StableRouting' else '' }}>Samantha (Stable/SpecialRouter)</option>
+			<option value="sparksammy/samantha-combo-3-small:latest" {{ 'selected' if selected_model == 'sparksammy/samantha-combo-3-small:latest' else '' }}>Combo 3 Small</option>
 		</select>
 		<input type="text" size="63" name="command" required autocomplete="off">
 		<input type="submit" value="Submit">
