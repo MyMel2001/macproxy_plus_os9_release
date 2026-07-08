@@ -17,7 +17,7 @@ MAGENTA = '\033[95m'
 CYAN = '\033[96m'
 RESET = '\033[0m'  # Reset to default color
 
-DOMAIN = "websimulator.ai"
+DOMAIN = "samantha.web"
 
 MAX_HISTORY = 3
 

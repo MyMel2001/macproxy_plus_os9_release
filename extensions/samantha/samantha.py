@@ -5,7 +5,7 @@ import config
 # Initialize the OpenAI client with no restrictive timeout limits
 client = OpenAI(base_url="http://100.118.11.83:11434/v1", api_key="x")
 
-DOMAIN = "ai.nodemixaholic.com"
+DOMAIN = "samantha.ai"
 
 messages = []
 selected_model = "sparksammy/samantha-combo-3-small:latest"
