@@ -16,7 +16,9 @@ WHITELISTED_DOMAINS = [
 	"bluesky.nodemixaholic.com",
 	"bsky.nodemixaholic.com",
 	"osn.nodemixaholic.com",
-	"newnet.lol"
+	"newnet.lol",
+	"samantha.ai",
+	"samantha.web"
 ]
 ZIP_CODE = 75602
 ENABLED_EXTENSIONS = [
