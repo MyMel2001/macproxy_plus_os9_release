@@ -1,7 +1,7 @@
 """
 GitHub extension for Macproxy
-Shows repositories, downloads ZIPs, manages Issues/PRs, and supports uploading 
-ZIP changes to create Pull Requests via standard HTML forms.
+Shows repositories, downloads ZIPs, manages Issues/PRs, and supports creating,
+cloning, and deleting repositories via standard HTML forms.
 Compatible with 1998-era browsers (IE5, Netscape Navigator).
 """
 
@@ -109,22 +109,19 @@ def handle_zip_pr(repo_full, zip_file, pr_title, pr_body):
 		# 3. Process the uploaded ZIP file
 		zip_bytes = io.BytesIO(zip_file.read())
 		with zipfile.ZipFile(zip_bytes, 'r') as z:
-			# Track deletions first to handle .DEL overrides securely
 			del_files = [f for f in z.namelist() if f.endswith('.DEL')]
 			
 			for f_info in z.infolist():
 				if f_info.is_dir() or f_info.filename.endswith('.DEL'):
 					continue
 				
-				# Write out standard files (overwriting existing ones safely)
 				target_path = os.path.join(local_clone_path, f_info.filename)
 				os.makedirs(os.path.dirname(target_path), exist_ok=True)
 				with open(target_path, "wb") as out_f:
 					out_f.write(z.read(f_info.filename))
 
-			# Perform explicit deletions requested by .DEL placeholders
 			for del_file in del_files:
-				target_to_delete = del_file[:-4]  # Remove '.DEL' extension
+				target_to_delete = del_file[:-4]  # Remove '.DEL'
 				full_del_path = os.path.join(local_clone_path, target_to_delete)
 				if os.path.exists(full_del_path):
 					if os.path.isdir(full_del_path):
@@ -139,7 +136,6 @@ def handle_zip_pr(repo_full, zip_file, pr_title, pr_body):
 
 		# 5. Create PR using GitHub CLI
 		pr_cmd = ["gh", "pr", "create", "-R", repo_full, "-B", "main", "-H", branch_name, "-t", pr_title, "-b", pr_body]
-		# Fallback attempt to master if main branch config isn't absolute
 		res = subprocess.run(pr_cmd, cwd=local_clone_path, capture_output=True, text=True)
 		if res.returncode != 0:
 			pr_cmd[5] = "master"
@@ -155,14 +151,39 @@ def handle_zip_pr(repo_full, zip_file, pr_title, pr_body):
 
 
 def generate_homepage(users_repos, authed_user):
-	"""Generate the main GitHub repos page with retro-browser compatibility."""
+	"""Generate the main GitHub repos page with repo creation and management controls."""
 	html = '<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">\n<html>\n<head>\n<title>GitHub Repo Browser</title>\n</head>\n<body>\n'
 	html += '<center><h1>GitHub Repo Browser</h1></center>\n<hr>\n'
+
+	# --- REPOSITORY MANAGEMENT SECTION (CREATE / SERVER CLONE) ---
+	html += '<h2>Repository Administration</h2>\n'
+	html += '<table border="0" cellpadding="4">\n<tr valign="top">\n<td>\n'
+	
+	# Create Form
+	html += '<h3>Create New Repository</h3>\n'
+	html += '<form action="/repo-create" method="POST">\n'
+	html += 'Name: <input type="text" name="repo_name" size="20"><br>\n'
+	html += 'Visibility: <input type="radio" name="visibility" value="public" checked> Public '
+	html += '<input type="radio" name="visibility" value="private"> Private<br>\n'
+	html += '<input type="submit" value="Create Repository">\n'
+	html += '</form>\n'
+	
+	html += '</td>\n<td width="50">&nbsp;</td>\n<td>\n'
+	
+	# Clone Form
+	html += '<h3>Clone Repository to Server Workdir</h3>\n'
+	html += '<form action="/repo-clone" method="POST">\n'
+	html += 'Repo Path (user/repo): <input type="text" name="repo_full" size="25"><br>\n'
+	html += '<input type="submit" value="Clone Repository">\n'
+	html += '</form>\n'
+	
+	html += '</td>\n</tr>\n</table>\n<hr>\n'
 
 	if not users_repos:
 		html += '<p>No GitHub users configured. Add GITHUB_USERS to config.py.</p>\n</body>\n</html>'
 		return html
 
+	# --- REPOSITORY LISTINGS ---
 	for username, repos in users_repos:
 		is_owner = (username.lower() == authed_user.lower())
 		html += f'<h2>Repositories by <a href="https://github.com/{username}">{username}</a></h2>\n<ul>\n'
@@ -181,6 +202,7 @@ def generate_homepage(users_repos, authed_user):
 			
 			if is_owner:
 				html += f' | <a href="/repo-manage?repo={repo_full}"><b>[Manage Issues & PRs]</b></a>'
+				html += f' | <a href="/repo-delete-confirm?repo={repo_full}"><font color="#CC0000">[Delete Repo]</font></a>'
 			
 			html += '</font>\n<br><br></li>\n'
 		html += '</ul>\n<hr>\n'
@@ -220,7 +242,7 @@ def generate_manage_page(repo_full):
 		html += '<table border="1" cellpadding="4" cellspacing="0">\n<tr bgcolor="#EEEEEE"><td><b>#</b></td><td><b>Title</b></td><td><b>Author</b></td><td><b>Action</b></td></tr>\n'
 		for pr in prs:
 			num = pr.get("number")
-			html += f'<tr><td>{num}</td><td><a href="/pr-detail?repo={repo_full}&num={num}">{pr.get("title")}</a></td><td>{pr.get("author", {}).get("login")}</td>\n'
+			html += f'<tr><td>={num}</td><td><a href="/pr-detail?repo={repo_full}&num={num}">{pr.get("title")}</a></td><td>{pr.get("author", {}).get("login")}</td>\n'
 			html += f'<td><form action="/pr-action?repo={repo_full}&num={num}" method="POST" style="margin:0;">'
 			html += '<input type="submit" name="action" value="Approve & Merge"> '
 			html += '<input type="submit" name="action" value="Close Pr">'
@@ -274,7 +296,6 @@ def generate_item_detail(repo_full, item_type, num):
 			html += f'<p><b>{c.get("author", {}).get("login")}</b> commented:<br>\n'
 			html += f'<font size="2">{c.get("body")}</font></p><hr width="50%" align="left">\n'
 
-	# Interactive Comment Interface
 	html += f'<h3>Add Comment</h3>\n'
 	html += f'<form action="/add-comment?repo={repo_full}&num={num}&type={item_type}" method="POST">\n'
 	html += '<textarea name="comment" rows="4" cols="50"></textarea><br>\n'
@@ -285,13 +306,31 @@ def generate_item_detail(repo_full, item_type, num):
 	return html
 
 
+def generate_delete_confirmation(repo_full):
+	"""Pure JS-free multi-stage HTML confirmation view for repository deletion."""
+	html = '<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">\n<html>\n<head>\n<title>Confirm Deletion</title>\n</head>\n<body>\n'
+	html += '<p><a href="/">&lt;&lt; Cancel and return home</a></p>\n'
+	html += '<table border="1" cellpadding="15" cellspacing="0" bgcolor="#FFF0F0" bordercolor="#CC0000" align="center">\n<tr><td>\n'
+	html += f'<center><h2><font color="#CC0000">CRITICAL WARNING</font></h2></center>\n'
+	html += f'<p>You are about to permanently delete the repository: <b>{repo_full}</b>.</p>\n'
+	html += '<p>This action cannot be undone. All branches, issues, and PR data will be vaporized.</p>\n'
+	html += f'<form action="/repo-delete-execute?repo={repo_full}" method="POST">\n'
+	html += '<input type="checkbox" name="confirm_check" value="yes"> <b>Yes, I completely understand what I am doing.</b><br><br>\n'
+	html += f'To proceed, type out the exact repository path (<b>{repo_full}</b>):<br>\n'
+	html += '<input type="text" name="confirm_name" size="40"><br><br>\n'
+	html += '<center><input type="submit" value="PERMANENTLY DESTROY REPOSITORY"></center>\n'
+	html += '</form>\n'
+	html += '</td></tr>\n</table>\n</body>\n</html>'
+	return html
+
+
 def handle_request(req):
 	"""Main request router tailored for standard HTML browser environments."""
 	parsed_url = urlparse(req.url)
 	path = parsed_url.path
 	query_params = parse_qs(parsed_url.query)
 
-	# Identify active account profile through the gh configuration context
+	# Fetch verified local CLI actor user
 	authed_user = run_gh_cmd(["api", "user", "--jq", ".login"]).strip()
 
 	# 1. Download Handler
@@ -351,7 +390,44 @@ def handle_request(req):
 			run_gh_cmd([cmd_type, "comment", num, "-R", repo_full, "-b", comment_text])
 		return f'<html><head><meta http-equiv="refresh" content="1;url=/{cmd_type}-detail?repo={repo_full}&num={num}"></head><body>Posting Comment...</body></html>', 200
 
-	# Home view
+	# 7. Repository Creation
+	if path == "/repo-create" and req.method == "POST":
+		name = req.form.get("repo_name", "").strip()
+		visibility = req.form.get("visibility", "public")
+		if name:
+			run_gh_cmd(["repo", "create", name, f"--{visibility}", "--confirm"])
+			return '<html><head><meta http-equiv="refresh" content="2;url=/"></head><body>Repository Created! Refreshing index...</body></html>', 200
+		return '<html><body>Error: Repository Name missing. <a href="/">Back</a></body></html>', 400
+
+	# 8. Repository Server Cloning
+	if path == "/repo-clone" and req.method == "POST":
+		repo_full = req.form.get("repo_full", "").strip()
+		if repo_full:
+			repo_name = repo_full.split("/")[-1]
+			target_dir = os.path.join(WORK_DIR, repo_name)
+			if os.path.exists(target_dir):
+				shutil.rmtree(target_dir)
+			run_gh_cmd(["repo", "clone", repo_full, target_dir])
+			return f'<html><body><h2>Repo Cloned to Server Workdir!</h2><p>Path: {target_dir}</p><a href="/">Back Home</a></body></html>', 200
+		return '<html><body>Error: Invalid path parameter. <a href="/">Back</a></body></html>', 400
+
+	# 9. Repository Deletion (Double-Confirmation Screens)
+	if path == "/repo-delete-confirm":
+		repo_full = query_params["repo"][0]
+		return generate_delete_confirmation(repo_full), 200
+
+	if path == "/repo-delete-execute" and req.method == "POST":
+		repo_full = query_params["repo"][0]
+		check = req.form.get("confirm_check")
+		typed_name = req.form.get("confirm_name", "").strip()
+
+		if check == "yes" and typed_name == repo_full:
+			run_gh_cmd(["repo", "delete", repo_full, "--yes"])
+			return '<html><head><meta http-equiv="refresh" content="3;url=/"></head><body>Repository permanently deleted. Returning Home...</body></html>', 200
+			
+		return '<html><body><h2>Deletion Cancelled</h2><p>Verification text failed or checkmark was missed.</p><a href="/">Back Home</a></body></html>', 400
+
+	# Main View Routing
 	users = get_github_users()
 	users_repos = []
 	for username in users:
