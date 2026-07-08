@@ -36,6 +36,8 @@ if test -e venv; then
 	fi
 fi
 
+npm i -g playwright
+
 # Create the venv if it doesn't exist
 cd "$(dirname "$0")"
 if ! test -e venv; then
@@ -48,6 +50,8 @@ if ! test -e venv; then
 	pip3 install -r requirements.txt &> /dev/null
 	git rev-parse HEAD > current
 fi
+
+playwright install chromium
 
 source venv/bin/activate
 

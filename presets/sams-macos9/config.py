@@ -15,7 +15,8 @@ WHITELISTED_DOMAINS = [
 	"github.com",
 	"bluesky.nodemixaholic.com",
 	"bsky.nodemixaholic.com",
-	"osn.nodemixaholic.com"
+	"osn.nodemixaholic.com",
+	"newnet.lol"
 ]
 ZIP_CODE = 75602
 ENABLED_EXTENSIONS = [
@@ -28,7 +29,8 @@ ENABLED_EXTENSIONS = [
 	"samantha",
 	"yeahyoutube",
 	"samantha-websimulator",
-	"github"
+	"github",
+	"newnet"
 ]
 
 # GitHub extension: list of GitHub usernames whose repos will be shown
