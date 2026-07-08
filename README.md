@@ -3,6 +3,8 @@ An extensible HTTP proxy that connects early computers to the Internet.
 
 This fork of MacProxy Plus that is optimized for use in macOS 9.2.2 Internet Explorer.
 
+***NOTE: The ZIP code in my sample config is NOT my zip code, but one that is "close enough" for my weather use.***
+
 ### Demonstration Video of Original Project (on YouTube)
 
 <a href="https://youtu.be/f1v1gWLHcOk" target="_blank">
