@@ -1,4 +1,4 @@
-## MacProxy Plus (Sam's macOS 9 Mod)
+# MacProxy Plus (Sam's macOS 9 Mod)
 An extensible HTTP proxy that connects early computers to the Internet.
 
 This fork of MacProxy Plus that is optimized for use in macOS 9.2.2 Internet Explorer.
@@ -8,6 +8,8 @@ This fork of MacProxy Plus that is optimized for use in macOS 9.2.2 Internet Exp
 <a href="https://youtu.be/f1v1gWLHcOk" target="_blank">
   <img src="./readme_images/youtube_thumbnail.jpg" alt="Teaching an Old Mac New Tricks" width="400">
 </a>
+
+## Parts of Original README
 
 ### Extensions
 
