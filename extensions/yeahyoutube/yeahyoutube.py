@@ -587,10 +587,44 @@ def generate_import_result_page(imported_count, failed=False):
 # Video operations - Streaming instead of download
 # ---------------------------------------------------------------------------
 
+def detect_hardware_acceleration():
+	"""
+	Detect available hardware acceleration for video encoding.
+	Returns (encoder_name, input_hw_args, output_hw_args) tuple.
+	"""
+	try:
+		result = subprocess.run(
+			["ffmpeg", "-hide_banner", "-encoders"],
+			capture_output=True, text=True, timeout=5
+		)
+		encoders = result.stdout.lower()
+		
+		# Priority order: VideoToolbox (macOS) > VA-API > NVENC > none
+		if "h264_videotoolbox" in encoders:
+			print("[yeahyoutube] Using VideoToolbox hardware acceleration (macOS)")
+			return "h264_videotoolbox", [], []
+		elif "h264_vaapi" in encoders:
+			print("[yeahyoutube] Using VA-API hardware acceleration (Linux)")
+			return "h264_vaapi", ["-hwaccel", "vaapi", "-hwaccel_device", "/dev/dri/renderD128"], []
+		elif "h264_nvenc" in encoders:
+			print("[yeahyoutube] Using NVENC hardware acceleration (NVIDIA)")
+			return "h264_nvenc", [], []
+	except subprocess.TimeoutExpired:
+		pass
+	except Exception as e:
+		print(f"[yeahyoutube] Error detecting hardware acceleration: {e}")
+	
+	print("[yeahyoutube] Using software encoding (no hardware acceleration)")
+	return None, [], []
+
+
 def transcode_video(video_id):
 	"""
 	Download a YouTube video and transcode it to a QuickTime-compatible .mov file
 	for progressive download / streaming on Mac OS 9 browsers.
+	
+	Uses hardware acceleration when available for faster transcoding.
+	Uses SVQ3 (Sorenson Video 3) codec which has native QuickTime support on Mac OS 9.
 	
 	Returns the path to the transcoded .mov file, or None on failure.
 	"""
@@ -601,8 +635,11 @@ def transcode_video(video_id):
 		print(f"[yeahyoutube] Cache hit for video {video_id}")
 		return flim_path
 	
-	# Use yewtu.be for downloading (invidious instance bypasses some restrictions)
-	video_url = f"https://yewtu.be/watch?v={video_id}"
+	# Detect hardware acceleration
+	hw_encoder, hw_input_args, hw_output_args = detect_hardware_acceleration()
+	
+	# Use youtube.com directly for downloading
+	video_url = f"https://www.youtube.com/watch?v={video_id}"
 	
 	ydl_opts = {
 		'outtmpl': os.path.join(DOWNLOAD_DIRECTORY, f"{video_id}.%(ext)s"),
@@ -644,33 +681,51 @@ def transcode_video(video_id):
 		print(f"[yeahyoutube] Failed to download video {video_id}")
 		return None
 
-	try:
-		subprocess.run([
-			"ffmpeg",
-			"-y",  # Overwrite output file if it exists (we already checked, but safe)
-			"-i", downloaded_video_path,
-			"-f", "mov",
-			"-movflags", "faststart",  # Enable QuickTime progressive download / streaming
-			"-vcodec", "svq1",  # Sorenson Video codec (best Mac OS 9 QuickTime compatibility)
-			"-acodec", "adpcm_ima_qt",  # IMA ADPCM audio (best Mac OS 9 QuickTime compatibility)
-			"-ar", "11025",  # Low audio sample rate for 56k
-			"-ac", "1",  # Mono audio
-			"-vf", "scale=300:225",  # Low resolution for Mac OS 9 screens
-			"-r", "12",  # Low frame rate for 56k modem
-			"-b:v", "74k",  # Very low video bitrate for 56k
-			"-b:a", "4k",  # Low audio bitrate
-			"-q:v", "5",  # Slightly lower quality
-			flim_path
-		], check=True, capture_output=True, text=True)
-		print(f"[yeahyoutube] Successfully transcoded video {video_id} to {flim_path}")
-	except subprocess.CalledProcessError as e:
-		print(f"[yeahyoutube] ffmpeg error: {e.stderr}")
-		return None
-	finally:
-		# Clean up the downloaded source file
+	# Build FFmpeg command with optimized settings for speed
+	ffmpeg_cmd = ["ffmpeg", "-y"]
+	ffmpeg_cmd.extend(hw_input_args)
+	ffmpeg_cmd.extend(["-i", downloaded_video_path])
+	
+	# Output settings for QuickTime compatibility with Mac OS 9
+	# SVQ3 (Sorenson Video 3) has native support in QuickTime on Mac OS 9
+	ffmpeg_cmd.extend([
+		"-f", "mov",
+		"-movflags", "faststart",  # Enable QuickTime progressive download
+		"-vcodec", "svq3",  # Sorenson Video 3 - best for Mac OS 9 QuickTime
+		"-acodec", "adpcm_ima_qt",  # IMA ADPCM - native QuickTime audio
+		"-ar", "22050",  # 22kHz sample rate
+		"-ac", "1",  # Mono
+		"-b:a", "16k",  # Low audio bitrate
+		"-vf", "scale=480:360",  # 4:3 aspect ratio for OS 9 screens
+		"-r", "15",  # 15 fps - smooth enough, lower than source
+		"-q:v", "3",  # Higher quality (lower number = better)
+	])
+	ffmpeg_cmd.extend(hw_output_args)
+	ffmpeg_cmd.append(flim_path)
+	
+	print(f"[yeahyoutube] FFmpeg command: {' '.join(ffmpeg_cmd)}")
+	
+	result = subprocess.run(ffmpeg_cmd, capture_output=True, text=True)
+	
+	if result.returncode != 0:
+		print(f"[yeahyoutube] ffmpeg error: {result.stderr}")
+		# Clean up and return None
 		if downloaded_video_path and os.path.exists(downloaded_video_path):
 			os.remove(downloaded_video_path)
-			print(f"[yeahyoutube] Cleaned up source file {downloaded_video_path}")
+		return None
+	
+	print(f"[yeahyoutube] Successfully transcoded video {video_id} to {flim_path}")
+	
+	# Clean up the downloaded source file
+	if downloaded_video_path and os.path.exists(downloaded_video_path):
+		os.remove(downloaded_video_path)
+		print(f"[yeahyoutube] Cleaned up source file {downloaded_video_path}")
+
+	if os.path.exists(flim_path):
+		return flim_path
+	else:
+		print(f"[yeahyoutube] Transcoded file not found at {flim_path}")
+		return None
 
 	if os.path.exists(flim_path):
 		return flim_path
@@ -681,50 +736,56 @@ def transcode_video(video_id):
 
 def stream_video(video_id):
 	"""
-	Serve a transcoded .mov file with HTTP Range support for QuickTime
-	progressive download (streaming).
+	Stream a transcoded video. Uses cached file if available,
+	otherwise downloads, transcodes, and streams.
 	"""
 	print(f"[yeahyoutube] stream_video called with video_id: {video_id}")
+	
+	# Check cache first
+	flim_path = os.path.join(FLIM_DIRECTORY, f"{video_id}.mov")
+	if os.path.exists(flim_path):
+		print(f"[yeahyoutube] Cache hit for video {video_id}")
+		return send_cached_file(flim_path)
+	
+	# Use original transcode_video which handles download + transcode
 	flim_path = transcode_video(video_id)
 	if not flim_path:
 		abort(500, "Error: Failed to transcode video")
 		return
 	
+	return send_cached_file(flim_path)
+
+
+def send_cached_file(flim_path):
+	"""Send a cached transcoded file with Range support."""
 	file_size = os.path.getsize(flim_path)
-	
-	# Handle HTTP Range requests (required for QuickTime progressive download)
 	range_header = request.headers.get('Range', None)
 	
 	if range_header:
-		# Parse the Range header: "bytes=<start>-<end>"
 		try:
 			if '=' in range_header:
 				byte_range = range_header.strip().split('bytes=')[1]
 			else:
 				byte_range = range_header.strip()
-			
 			range_parts = byte_range.split('-')
 			range_start = int(range_parts[0]) if range_parts[0] else 0
 			range_end = int(range_parts[1]) if range_parts[1] else file_size - 1
 		except (IndexError, ValueError):
-			# Invalid Range header, return full file
 			range_start = 0
 			range_end = file_size - 1
 		
-		# If no end was specified, send from start to end of file
 		if range_end >= file_size:
 			range_end = file_size - 1
 		
 		length = range_end - range_start + 1
 		
-		# Read the requested byte range
 		with open(flim_path, 'rb') as f:
 			f.seek(range_start)
 			data = f.read(length)
 		
-		response = Response(
+		return Response(
 			data,
-			status=206,  # Partial Content
+			status=206,
 			mimetype='video/quicktime',
 			headers={
 				'Content-Range': f'bytes {range_start}-{range_end}/{file_size}',
@@ -732,16 +793,11 @@ def stream_video(video_id):
 				'Accept-Ranges': 'bytes',
 			}
 		)
-		return response
 	else:
-		# No Range header - send the entire file.
-		# QuickTime on Mac OS 9 needs Accept-Ranges: bytes to know it can
-		# perform progressive download (HTTP Range requests). Without this
-		# header, QuickTime shows its logo but never attempts to stream.
 		with open(flim_path, 'rb') as f:
 			data = f.read()
 		
-		response = Response(
+		return Response(
 			data,
 			status=200,
 			mimetype='video/quicktime',
@@ -750,7 +806,6 @@ def stream_video(video_id):
 				'Accept-Ranges': 'bytes',
 			}
 		)
-		return response
 
 
 def generate_watch_page(video_id, video_info=None):
