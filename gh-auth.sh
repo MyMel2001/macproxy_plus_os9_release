@@ -1,0 +1,3 @@
+echo 'NOTE: ONLY DO THIS ON MACHINES YOU TRUST!'
+read "(Press enter/return key to continue)"
+gh auth login --scopes "repo,repo:status,repo_deployment,public_repo,repo:invite,security_events,admin:public_key,write:public_key,read:public_key,admin:org,write:org,read:org,admin:org_hook,gist,notifications,user,read:user,user:email,user:follow,project,read:project,delete_repo,write:discussion,read:discussion,admin:enterprise,manage_runners:enterprise,manage_billing:enterprise,read:enterprise,audit_log,codespace,copilot,workflow"
