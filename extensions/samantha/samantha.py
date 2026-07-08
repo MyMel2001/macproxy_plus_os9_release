@@ -1,8 +1,8 @@
-from flask import request, render_template_string
+from flask import request, render_template_string, Response, stream_with_context
 from openai import OpenAI
 import config
 
-# Initialize the OpenAI client with your API key
+# Initialize the OpenAI client with no restrictive timeout limits
 client = OpenAI(base_url="http://100.118.11.83:11434/v1", api_key="x")
 
 DOMAIN = "ai.nodemixaholic.com"
@@ -31,8 +31,8 @@ system_prompts = [
 		"tags (when appropriate) to emphasize it."},
 ]
 
-HTML_TEMPLATE = """
-<!DOCTYPE html>
+# Split HTML layout so we can stream text dynamically into the middle of the document
+HTML_TOP = """<!DOCTYPE html>
 <html lang="en">
 <head>
 	<meta charset="UTF-8">
@@ -41,63 +41,87 @@ HTML_TEMPLATE = """
 <body>
 	<form method="post" action="/">
 		<select id="model" name="model">
-			<option value="sparksammy/samantha-combo-3-small:latest" {{ 'selected' if selected_model == 'sparksammy/samantha-combo-3-small:latest' else '' }}>Combo 3 Small</option>
+			<option value="sparksammy/samantha-combo-3-small:latest" {% if selected_model == 'sparksammy/samantha-combo-3-small:latest' %}selected{% endif %}>Combo 3 Small</option>
 		</select>
 		<input type="text" size="63" name="command" required autocomplete="off">
 		<input type="submit" value="Submit">
 	</form>
 	<div id="chat">
-		<p>{{ output|safe }}</p>
-	</div>
+"""
+
+HTML_BOTTOM = """	</div>
 </body>
 </html>
 """
 
 def handle_request(req):
 	if req.method == 'POST':
-		content, status_code = handle_post(req)
+		# Return a streaming Flask response object for POST requests
+		return Response(stream_with_context(generate_stream(req)), mimetype='text/html')
 	elif req.method == 'GET':
 		content, status_code = handle_get(req)
+		return content, status_code
 	else:
-		content, status_code = "Not Found", 404
-	return content, status_code
+		return "Not Found", 404
 
 def handle_get(request):
-	return chat_interface(request), 200
-
-def handle_post(request):
-	return chat_interface(request), 200
-
-def chat_interface(request):
-	global messages, selected_model, previous_model
+	# Build initial empty view state on GET
 	output = ""
-
-	if request.method == 'POST':
-		user_input = request.form['command']
-		selected_model = request.form['model']
-
-		# Check if the model has changed
-		if selected_model != previous_model:
-			previous_model = selected_model
-			messages = [{"role": "user", "content": user_input}]
-		else:
-			messages.append({"role": "user", "content": user_input})
-
-		# Prepare messages, ensuring not to exceed the most recent 10 interactions
-		messages_to_send = system_prompts + messages[-10:]
-
-		# Send the messages to OpenAI and get the response
-		response = client.chat.completions.create(
-			model=selected_model,
-			messages=messages_to_send
-		)
-		response_body = response.choices[0].message.content
-		messages.append({"role": "system", "content": response_body})
-
 	for msg in reversed(messages[-10:]):
 		if msg['role'] == 'user':
 			output += f"<b>User:</b> {msg['content']}<br>"
 		elif msg['role'] == 'system':
 			output += f"<b>Samantha:</b> {msg['content']}<br>"
+	
+	full_page = render_template_string(HTML_TOP, selected_model=selected_model) + output + HTML_BOTTOM
+	return full_page, 200
 
-	return render_template_string(HTML_TEMPLATE, output=output, selected_model=selected_model)
+def generate_stream(request):
+	global messages, selected_model, previous_model
+	
+	user_input = request.form['command']
+	selected_model = request.form['model']
+
+	if selected_model != previous_model:
+		previous_model = selected_model
+		messages = [{"role": "user", "content": user_input}]
+	else:
+		messages.append({"role": "user", "content": user_input})
+
+	messages_to_send = system_prompts + messages[-10:]
+
+	# 1. Immediately send the top half of the HTML layout to IE5 to reset its timeout clock
+	yield render_template_string(HTML_TOP, selected_model=selected_model)
+
+	# 2. Render previous chat histories first
+	history_output = ""
+	for msg in reversed(messages[:-1][-10:]):  # Exclude current user message for historical order rendering
+		if msg['role'] == 'user':
+			history_output += f"<b>User:</b> {msg['content']}<br>"
+		elif msg['role'] == 'system':
+			history_output += f"<b>Samantha:</b> {msg['content']}<br>"
+	yield history_output
+
+	# Render current user prompt
+	yield f"<b>User:</b> {user_input}<br><b>Samantha:</b> "
+
+	# 3. Request a streaming response from the local LLM
+	response = client.chat.completions.create(
+		model=selected_model,
+		messages=messages_to_send,
+		stream=True
+	)
+
+	full_response_text = ""
+	# 4. As tokens arrive, yield them raw to the browser chunk by chunk
+	for chunk in response:
+		if chunk.choices and chunk.choices[0].delta.content:
+			token = chunk.choices[0].delta.content
+			full_response_text += token
+			yield token
+
+	# Finalize chat state memory
+	messages.append({"role": "system", "content": full_response_text})
+	
+	# 5. Send closing tags to complete the DOM tree cleanly
+	yield "<br>" + HTML_BOTTOM

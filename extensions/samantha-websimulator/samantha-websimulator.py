@@ -1,7 +1,6 @@
-# HINT: MacWeb 2.0 doesn't seem to have CSS support. To work around this, in MacWeb 2.0 set <h4> styling to font="Chicago" with Size="As Is".
 # HINT: WebSimulator is not associated with or endorsed by WebSim.
 
-from flask import request, render_template_string
+from flask import request, render_template_string, Response, stream_with_context
 from openai import OpenAI
 import config
 import importlib.util
@@ -150,13 +149,14 @@ def handle_request(req):
 									status=status, 
 									override_active=override_active)
 
-	return simulate_web_request(req)
+	# Return a streaming Response object for proxy requests to trick the browser timeout
+	return Response(stream_with_context(simulate_web_request_stream(req)), mimetype='text/html')
 
 def format_cost(cost):
 	formatted = f"{cost:.4f}"
 	return f"{GREEN}{formatted[:formatted.index('.')+3]}{RESET}{formatted[formatted.index('.')+3:]}"
 
-def simulate_web_request(req):
+def simulate_web_request_stream(req):
 	global message_history
 	global total_spend
 
@@ -190,19 +190,25 @@ def simulate_web_request(req):
 	all_messages.append({"role": "user", "content": current_request_content})
 
 	try:
-		# Send the messages to OpenAI and get the response
+		# Send the messages to OpenAI with stream=True
 		response = client.chat.completions.create(
 			model="sparksammy/samantha-combo-3-small:latest",
 			messages=all_messages,
+			stream=True
 		)
 
-		simulated_content = response.choices[0].message.content
+		simulated_content = ""
+		# Yield chunks immediately to vintage browser streams
+		for chunk in response:
+			if chunk.choices and chunk.choices[0].delta.content:
+				token = chunk.choices[0].delta.content
+				simulated_content += token
+				yield token
 
-		# Update message history
+		# Update message history only after the stream fully completes
 		message_history.append({"request": current_request_content, "response": simulated_content})
 		if len(message_history) > MAX_HISTORY:
 			message_history.pop(0)
 
-		return simulated_content
 	except Exception as e:
-		return f"<html><body><p>An error occurred while simulating the webpage: {str(e)}</p></body></html>"
+		yield f"<html><body><p>An error occurred while simulating the webpage: {str(e)}</p></body></html>"
