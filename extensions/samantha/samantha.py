@@ -8,7 +8,7 @@ client = OpenAI(base_url="http://100.118.11.83:11434/v1", api_key="x")
 DOMAIN = "ai.nodemixaholic.com"
 
 messages = []
-selected_model = "sparksammy/samantha-combo-3-small:latest"
+selected_model = "sparksammy/samantha-4-combo:small"
 previous_model = selected_model
 
 system_prompts = [
@@ -41,8 +41,7 @@ HTML_TEMPLATE = """
 <body>
 	<form method="post" action="/">
 		<select id="model" name="model">
-			<option value="sparksammy/tinysam-l3.2-v2:latest" {{ 'selected' if selected_model == 'sparksammy/tinysam-l3.2-v2:latest' else '' }}>TinySam LLAMA 3.2</option>
-			<option value="sparksammy/samgem3:latest" {{ 'selected' if selected_model == 'sparksammy/samgem3:latest' else '' }}>SamGem 3</option>
+			<option value="sparksammy/samantha-4-combo:small" {{ 'selected' if selected_model == 'sparksammy/samantha-4-combo:small' else '' }}>Samantha 4 Combo (Small)</option>
 		</select>
 		<input type="text" size="63" name="command" required autocomplete="off">
 		<input type="submit" value="Submit">
