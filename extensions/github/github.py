@@ -47,6 +47,12 @@ def run_gh_cmd(args):
 		return ""
 
 
+def get_user_orgs():
+	"""Fetch the list of organization logins the authenticated user belongs to."""
+	output = run_gh_cmd(["api", "user/orgs", "--jq", ".[].login"])
+	return [org.strip().lower() for org in output.splitlines() if org.strip()]
+
+
 def fetch_user_repos(username):
 	"""Fetch public repositories for a given GitHub username."""
 	url = f"{GITHUB_API_BASE}/users/{username}/repos?per_page=100&sort=updated"
@@ -150,7 +156,7 @@ def handle_zip_pr(repo_full, zip_file, pr_title, pr_body):
 			shutil.rmtree(local_clone_path)
 
 
-def generate_homepage(users_repos, authed_user):
+def generate_homepage(users_repos, authed_user, user_orgs):
 	"""Generate the main GitHub repos page with repo creation and management controls."""
 	html = '<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">\n<html>\n<head>\n<title>GitHub Repo Browser</title>\n</head>\n<body>\n'
 	html += '<center><h1>GitHub Repo Browser</h1></center>\n<hr>\n'
@@ -185,7 +191,8 @@ def generate_homepage(users_repos, authed_user):
 
 	# --- REPOSITORY LISTINGS ---
 	for username, repos in users_repos:
-		is_owner = (username.lower() == authed_user.lower())
+		# Fix: grants ownership view if matching the user's username OR any of their organizations
+		is_owner = (username.lower() == authed_user.lower() or username.lower() in user_orgs)
 		html += f'<h2>Repositories by <a href="https://github.com/{username}">{username}</a></h2>\n<ul>\n'
 		
 		for repo in repos:
@@ -330,8 +337,9 @@ def handle_request(req):
 	path = parsed_url.path
 	query_params = parse_qs(parsed_url.query)
 
-	# Fetch verified local CLI actor user
+	# Fetch verified local CLI actor user and user organizations
 	authed_user = run_gh_cmd(["api", "user", "--jq", ".login"]).strip()
+	user_orgs = get_user_orgs()
 
 	# 1. Download Handler
 	if path == "/download" and "repo" in query_params:
@@ -403,7 +411,6 @@ def handle_request(req):
 	if path == "/repo-fork" and req.method == "POST":
 		repo_full = req.form.get("repo_full", "").strip()
 		if repo_full:
-			# Executes remote fork via gh CLI without local disk cloning operations
 			run_gh_cmd(["repo", "fork", repo_full, "--clone=false"])
 			return f'<html><head><meta http-equiv="refresh" content="3;url=/"></head><body>Successfully forked {repo_full} to your profile! Updating index...</body></html>', 200
 		return '<html><body>Error: Invalid path parameter. <a href="/">Back</a></body></html>', 400
@@ -432,4 +439,4 @@ def handle_request(req):
 		if repos:
 			users_repos.append((username, repos))
 
-	return generate_homepage(users_repos, authed_user), 200
+	return generate_homepage(users_repos, authed_user, user_orgs), 200

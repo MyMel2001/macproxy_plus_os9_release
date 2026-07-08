@@ -24,3 +24,4 @@ extensions/youtube
 
 **/extensions/yeahyoutube/subscriptions.json
 **/extensions/yeahyoutube/cookies.txt
+extensions/github/repo_cache/*
