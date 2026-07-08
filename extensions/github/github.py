@@ -1,7 +1,7 @@
 """
 GitHub extension for Macproxy
 Shows repositories, downloads ZIPs, manages Issues/PRs, and supports creating,
-cloning, and deleting repositories via standard HTML forms.
+forking, and deleting repositories via standard HTML forms.
 Compatible with 1998-era browsers (IE5, Netscape Navigator).
 """
 
@@ -155,7 +155,7 @@ def generate_homepage(users_repos, authed_user):
 	html = '<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">\n<html>\n<head>\n<title>GitHub Repo Browser</title>\n</head>\n<body>\n'
 	html += '<center><h1>GitHub Repo Browser</h1></center>\n<hr>\n'
 
-	# --- REPOSITORY MANAGEMENT SECTION (CREATE / SERVER CLONE) ---
+	# --- REPOSITORY MANAGEMENT SECTION (CREATE / FORK) ---
 	html += '<h2>Repository Administration</h2>\n'
 	html += '<table border="0" cellpadding="4">\n<tr valign="top">\n<td>\n'
 	
@@ -170,11 +170,11 @@ def generate_homepage(users_repos, authed_user):
 	
 	html += '</td>\n<td width="50">&nbsp;</td>\n<td>\n'
 	
-	# Clone Form
-	html += '<h3>Clone Repository to Server Workdir</h3>\n'
-	html += '<form action="/repo-clone" method="POST">\n'
-	html += 'Repo Path (user/repo): <input type="text" name="repo_full" size="25"><br>\n'
-	html += '<input type="submit" value="Clone Repository">\n'
+	# Fork Form
+	html += '<h3>Fork a Repository</h3>\n'
+	html += '<form action="/repo-fork" method="POST">\n'
+	html += 'Target Repo (upstream/repo): <input type="text" name="repo_full" size="25"><br>\n'
+	html += '<input type="submit" value="Fork Repository">\n'
 	html += '</form>\n'
 	
 	html += '</td>\n</tr>\n</table>\n<hr>\n'
@@ -242,7 +242,7 @@ def generate_manage_page(repo_full):
 		html += '<table border="1" cellpadding="4" cellspacing="0">\n<tr bgcolor="#EEEEEE"><td><b>#</b></td><td><b>Title</b></td><td><b>Author</b></td><td><b>Action</b></td></tr>\n'
 		for pr in prs:
 			num = pr.get("number")
-			html += f'<tr><td>={num}</td><td><a href="/pr-detail?repo={repo_full}&num={num}">{pr.get("title")}</a></td><td>{pr.get("author", {}).get("login")}</td>\n'
+			html += f'<tr><td>{num}</td><td><a href="/pr-detail?repo={repo_full}&num={num}">{pr.get("title")}</a></td><td>{pr.get("author", {}).get("login")}</td>\n'
 			html += f'<td><form action="/pr-action?repo={repo_full}&num={num}" method="POST" style="margin:0;">'
 			html += '<input type="submit" name="action" value="Approve & Merge"> '
 			html += '<input type="submit" name="action" value="Close Pr">'
@@ -399,16 +399,13 @@ def handle_request(req):
 			return '<html><head><meta http-equiv="refresh" content="2;url=/"></head><body>Repository Created! Refreshing index...</body></html>', 200
 		return '<html><body>Error: Repository Name missing. <a href="/">Back</a></body></html>', 400
 
-	# 8. Repository Server Cloning
-	if path == "/repo-clone" and req.method == "POST":
+	# 8. Repository Forking
+	if path == "/repo-fork" and req.method == "POST":
 		repo_full = req.form.get("repo_full", "").strip()
 		if repo_full:
-			repo_name = repo_full.split("/")[-1]
-			target_dir = os.path.join(WORK_DIR, repo_name)
-			if os.path.exists(target_dir):
-				shutil.rmtree(target_dir)
-			run_gh_cmd(["repo", "clone", repo_full, target_dir])
-			return f'<html><body><h2>Repo Cloned to Server Workdir!</h2><p>Path: {target_dir}</p><a href="/">Back Home</a></body></html>', 200
+			# Executes remote fork via gh CLI without local disk cloning operations
+			run_gh_cmd(["repo", "fork", repo_full, "--clone=false"])
+			return f'<html><head><meta http-equiv="refresh" content="3;url=/"></head><body>Successfully forked {repo_full} to your profile! Updating index...</body></html>', 200
 		return '<html><body>Error: Invalid path parameter. <a href="/">Back</a></body></html>', 400
 
 	# 9. Repository Deletion (Double-Confirmation Screens)
