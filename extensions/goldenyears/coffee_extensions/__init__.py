@@ -17,7 +17,7 @@ On form submission:
 5. Only payment results show a simulation notice
 
 Standard interface for each coffee extension:
-    DOMAIN = "service-name.goldenyears.local"  # The domain this extension handles
+    DOMAIN = "service-name.goldenyears.yay"  # The domain this extension handles
     DESCRIPTION = "What this extension does"     # Description for the AI prompt
     ACTION_ROUTES = {"pattern": "action_name"}  # Form action pattern -> action mapping
     
@@ -49,7 +49,7 @@ COFFEE_EXTENSIONS_DIR = os.path.dirname(os.path.abspath(__file__))
 coffee_extensions = {}
 
 # Maps action pattern -> (domain, action_name)
-# e.g. "twitter.com/login" -> ("bluesky.goldenyears.local", "login")
+# e.g. "twitter.com/login" -> ("bluesky.goldenyears.yay", "login")
 action_routes = {}
 
 
@@ -144,11 +144,11 @@ To create a new extension, append this block AFTER your closing </html> tag:
 
 <!--COFFEE_EXTENSION:extension_name
 DESCRIPTION="What this extension does"
-DOMAIN="service-name.goldenyears.local"
+DOMAIN="service-name.goldenyears.yay"
 ACTION_ROUTES={"pattern1": "action1", "pattern2": "action2"}
 CODE=
 import requests
-DOMAIN = "service-name.goldenyears.local"
+DOMAIN = "service-name.goldenyears.yay"
 DESCRIPTION = "What this extension does"
 ACTION_ROUTES = {"pattern1": "action1", "pattern2": "action2"}
 

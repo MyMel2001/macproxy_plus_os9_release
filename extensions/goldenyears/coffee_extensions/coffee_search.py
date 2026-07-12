@@ -11,7 +11,7 @@ import requests
 import json
 import urllib.parse
 
-DOMAIN = "search.goldenyears.local"
+DOMAIN = "search.goldenyears.yay"
 DESCRIPTION = "Web search backend. Maps Google/Yahoo/Bing/Altavista search to real search via Wiby (retro web) and DuckDuckGo."
 
 ACTION_ROUTES = {

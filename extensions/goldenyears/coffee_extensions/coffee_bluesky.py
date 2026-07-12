@@ -12,7 +12,7 @@ import json
 import urllib.parse
 import datetime
 
-DOMAIN = "bluesky.goldenyears.local"
+DOMAIN = "bluesky.goldenyears.yay"
 DESCRIPTION = "Social media backend using Bluesky's AT Protocol. Maps Twitter/X features to Bluesky. Supports custom PDS endpoints."
 
 ACTION_ROUTES = {

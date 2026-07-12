@@ -12,7 +12,7 @@ import requests
 import json
 import urllib.parse
 
-DOMAIN = "crypto.goldenyears.local"
+DOMAIN = "crypto.goldenyears.yay"
 DESCRIPTION = "Payment/crypto backend. Maps PayPal/Visa/Mastercard/checkout flows to cryptocurrency info and price lookups via CoinGecko API."
 
 ACTION_ROUTES = {

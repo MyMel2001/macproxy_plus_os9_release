@@ -47,7 +47,7 @@ client = OpenAI(
     api_key=config.GOLDEN_YEARS_API_KEY
 )
 
-DOMAIN = "goldenyears.local"
+DOMAIN = "goldenyears.yay"
 TARGET_DATE = "19980710"  # Always July 10th of selected year
 last_request_time = 0
 REQUEST_DELAY = 0.2
@@ -106,7 +106,7 @@ Your job is to create a NEW Python coffee extension module that provides a real 
 
 == YOUR TASK ==
 Create a Python module for a new coffee extension that:
-1. Has a DOMAIN like "service-name.goldenyears.local"
+1. Has a DOMAIN like "service-name.goldenyears.yay"
 2. Has a DESCRIPTION explaining what it does
 3. Has ACTION_ROUTES mapping form action patterns to action names
 4. Has a handle_action_data(action, params, year) function that returns structured data
@@ -128,13 +128,13 @@ Respond with ONLY this JSON structure, nothing else:
 {
     "name": "extension_name",
     "description": "What this extension does",
-    "domain": "service-name.goldenyears.local",
+    "domain": "service-name.goldenyears.yay",
     "action_routes": {"form_action_pattern": "action_name"},
     "code": "the complete Python code for the module"
 }
 
 The code must include:
-- DOMAIN = "service-name.goldenyears.local"
+- DOMAIN = "service-name.goldenyears.yay"
 - DESCRIPTION = "..."
 - ACTION_ROUTES = {...}
 - def handle_action_data(action, params, year): ... returning a dict
@@ -166,21 +166,28 @@ def construct_wayback_url(url, timestamp):
 
 
 def find_july_snapshot(url, year):
-    """Use Wayback CDX API to find the closest snapshot to July of the given year"""
+    """Use Wayback CDX API to find a snapshot, preferring July of the given year.
+    
+    Searches the entire year, then scores snapshots to prefer July (the default month),
+    falling back to June/August, then any other month. Within the same month, picks the
+    snapshot closest to July 15th.
+    """
     try:
         cdx_url = f"https://web.archive.org/cdx/search/cdx"
+        
+        # Use a reasonable limit - we only need a few snapshots to find one in July.
+        # limit=-1 (unlimited) causes timeouts for popular sites like google.com.
         params = {
             'url': url,
             'matchType': 'prefix',
-            'limit': -1,
-            'from': f"{year}06",
-            'to': f"{year}08",
+            'limit': 100,
+            'from': f"{year}0101",
+            'to': f"{year}1231",
             'output': 'json',
-            'sort': 'closest',
-            'filter': '!statuscode:[500 TO 599]'
+            'filter': '!statuscode:5xx'
         }
 
-        response = archive_session.get(cdx_url, params=params, timeout=10)
+        response = archive_session.get(cdx_url, params=params, timeout=30)
         if response.status_code == 200:
             data = response.json()
             if len(data) > 1:
@@ -203,25 +210,6 @@ def find_july_snapshot(url, year):
                     abs(int(x[1][:8]) - int(f"{year}0715"))
                 ))
 
-                for snapshot in snapshots:
-                    return snapshot[1]
-
-        # Fallback: broader search
-        params = {
-            'url': url,
-            'matchType': 'prefix',
-            'limit': -1,
-            'from': f"{year}0101",
-            'to': f"{year}1231",
-            'output': 'json',
-            'sort': 'closest'
-        }
-        response = archive_session.get(cdx_url, params=params, timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            if len(data) > 1:
-                snapshots = data[1:]
-                snapshots.sort(key=lambda x: abs(int(x[1][:8]) - int(f"{year}0701")))
                 for snapshot in snapshots:
                     return snapshot[1]
 
@@ -421,7 +409,7 @@ def vibe_code_new_extension(form_html, form_action, year):
 
         name = result.get("name", "unknown")
         description = result.get("description", "")
-        domain = result.get("domain", f"{name}.goldenyears.local")
+        domain = result.get("domain", f"{name}.goldenyears.yay")
         action_routes_dict = result.get("action_routes", {})
         code = result.get("code", "")
 
@@ -527,11 +515,11 @@ def _rewire_url(url_attr, tag, soup, year, page_url, rewired, created_extensions
         # Rewire form: POST to same page URL with hidden fields
         tag['action'] = page_url
         tag['method'] = 'post'
-        ext_hidden = soup.new_tag('input', type='hidden', name='_coffee_ext', value=domain)
+        ext_hidden = soup.new_tag('input', attrs={'type': 'hidden', 'name': '_coffee_ext', 'value': domain})
         tag.append(ext_hidden)
-        act_hidden = soup.new_tag('input', type='hidden', name='_coffee_action', value=action_name)
+        act_hidden = soup.new_tag('input', attrs={'type': 'hidden', 'name': '_coffee_action', 'value': action_name})
         tag.append(act_hidden)
-        orig_hidden = soup.new_tag('input', type='hidden', name='_coffee_original_action', value=original_url)
+        orig_hidden = soup.new_tag('input', attrs={'type': 'hidden', 'name': '_coffee_original_action', 'value': original_url})
         tag.append(orig_hidden)
         rewired.append({'type': 'form', 'original': original_url, 'extension': domain, 'action': action_name})
         print(f'[Golden Years] Rewired form: {original_url} -> {domain}/{action_name}')
@@ -581,11 +569,11 @@ def _vibe_code_and_rewire(url, tag, soup, year, page_url, created_extensions):
         if tag_name == 'form':
             tag['action'] = page_url
             tag['method'] = 'post'
-            ext_hidden = soup.new_tag('input', type='hidden', name='_coffee_ext', value=new_domain)
+            ext_hidden = soup.new_tag('input', attrs={'type': 'hidden', 'name': '_coffee_ext', 'value': new_domain})
             tag.append(ext_hidden)
-            act_hidden = soup.new_tag('input', type='hidden', name='_coffee_action', value='default')
+            act_hidden = soup.new_tag('input', attrs={'type': 'hidden', 'name': '_coffee_action', 'value': 'default'})
             tag.append(act_hidden)
-            orig_hidden = soup.new_tag('input', type='hidden', name='_coffee_original_action', value=original_url)
+            orig_hidden = soup.new_tag('input', attrs={'type': 'hidden', 'name': '_coffee_original_action', 'value': original_url})
             tag.append(orig_hidden)
         elif tag_name == 'script':
             from urllib.parse import urlencode
@@ -650,7 +638,7 @@ def handle_request(req):
     host = parsed_url.netloc.split(':')[0]
     is_goldenyears_domain = host == DOMAIN
 
-    # Handle goldenyears.local control panel
+    # Handle goldenyears.yay control panel
     if is_goldenyears_domain:
         if req.method == 'POST':
             action = req.form.get('action')
@@ -799,7 +787,7 @@ def serve_archived_page(req):
         timestamp = find_july_snapshot(url, selected_year)
 
         if not timestamp:
-            return f"<html><body><center><font size=\"7\"><h4>Project:<br>Golden Years</h4></font><p><b>No archived snapshot found</b><br>for {url} in July {selected_year}.</p><p><a href=\"http://goldenyears.local/\">back to Golden Years</a></p></center></body></html>", 404, {'Content-Type': 'text/html'}
+            return f"<html><body><center><font size=\"7\"><h4>Project:<br>Golden Years</h4></font><p><b>No archived snapshot found</b><br>for {url} in July {selected_year}.</p><p><a href=\"http://goldenyears.yay/\">back to Golden Years</a></p></center></body></html>", 404, {'Content-Type': 'text/html'}
 
         archive_response = make_archive_request(url, timestamp)
         content = archive_response.content
@@ -840,4 +828,4 @@ def serve_archived_page(req):
 
     except Exception as e:
         print(f"[Golden Years] Error: {str(e)}")
-        return f"<html><body><center><font size=\"7\"><h4>Project:<br>Golden Years</h4></font><p><b>Error serving page:</b><br>{str(e)}</p><p><a href=\"http://goldenyears.local/\">back to Golden Years</a></p></center></body></html>", 500, {'Content-Type': 'text/html'}
+        return f"<html><body><center><font size=\"7\"><h4>Project:<br>Golden Years</h4></font><p><b>Error serving page:</b><br>{str(e)}</p><p><a href=\"http://goldenyears.yay/\">back to Golden Years</a></p></center></body></html>", 500, {'Content-Type': 'text/html'}
