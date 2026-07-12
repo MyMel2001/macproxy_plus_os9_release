@@ -54,6 +54,12 @@ for ext in ENABLED_EXTENSIONS:
 	extensions[ext] = module
 	domain_to_extension[module.DOMAIN] = module
 
+# Apply per-user cookie settings from publicmode extension before each request
+if "publicmode" in ENABLED_EXTENSIONS:
+	@app.before_request
+	def apply_publicmode_settings():
+		extensions["publicmode"].apply_cookie_settings()
+
 @app.route("/cached_image/<path:filename>")
 def serve_cached_image(filename):
 	return send_from_directory(CACHE_DIR, filename, mimetype='image/gif')

@@ -8,6 +8,17 @@
 # MISTRAL_API_KEY = "YOUR_MISTRAL_API_KEY_HERE"
 # KAGI_SESSION_TOKEN = "YOUR_KAGI_SESSION_TOKEN_HERE"
 
+# Project: Golden Years - OpenAI-compatible endpoint configuration
+# Point this at any OpenAI-compatible API (OpenAI, Ollama, vLLM, etc.)
+# GOLDEN_YEARS_API_BASE_URL = "http://localhost:11434/v1"
+# GOLDEN_YEARS_API_KEY = "x"
+# GOLDEN_YEARS_MODEL = "sparksammy/samantha-combo-3-small:latest"
+
+# Coffee Extensions - Bluesky Social (maps Twitter/X forms to Bluesky API)
+# BLUESKY_HANDLE = "your-handle.bsky.social"
+# BLUESKY_APP_PASSWORD = "your-app-password"
+# BLUESKY_PDS_URL = "https://bsky.social"  # Custom PDS endpoint (self-hosted, etc.)
+
 # Used by weather extension (which currently only works for United States)
 # ZIP_CODE = "YOUR_ZIP_CODE"
 
@@ -23,12 +34,14 @@ ENABLED_EXTENSIONS = [
 	#"mistral",
 	#"notyoutube",
 	#"npr",
+	#"publicmode",
 	#"reddit",
 	#"waybackmachine",
 	#"weather",
 	#"websimulator",
 	#"wiby",
 	#"wikipedia",
+	#"goldenyears",
 ]
 
 # While SIMPLIFY_HTML is True, you can use WHITELISTED_DOMAINS to disable post-processing for
