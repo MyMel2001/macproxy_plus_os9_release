@@ -47,6 +47,11 @@ ENABLED_EXTENSIONS = [
 # While SIMPLIFY_HTML is True, you can use WHITELISTED_DOMAINS to disable post-processing for
 # specific sites (only perform HTTPS -> HTTP conversion and character conversion (if CONVERT_CHARACTERS is True),
 # without otherwise modifying the page's source code).
+#
+# When the "goldenyears" extension is active, domains listed here are also EXCEPTED from the
+# time-machine effect — they will be served live (from the actual internet) instead of being
+# fetched from the Wayback Machine archive. This allows whitelisted sites to function normally
+# while the rest of the web is time-warped.
 WHITELISTED_DOMAINS = [
 	#"example.com",
 ]

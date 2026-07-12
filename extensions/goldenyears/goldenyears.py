@@ -631,6 +631,62 @@ def rewire_page_forms(soup, year, page_url):
     return rewired, created_extensions
 
 
+def is_whitelisted_domain(host):
+    """Check if the given host is in the admin's WHITELISTED_DOMAINS config.
+    
+    Domains on the whitelist are excepted from the Golden Years time-machine
+    effect and served live instead of from the Wayback Machine archive.
+    """
+    if not hasattr(config, 'WHITELISTED_DOMAINS') or not config.WHITELISTED_DOMAINS:
+        return False
+    return any(host.endswith(whitelisted) for whitelisted in config.WHITELISTED_DOMAINS)
+
+
+def serve_live_page(req):
+    """Fetch a page live (not from archive) for whitelisted domains.
+    
+    Applies character conversion but does not rewire forms or inject
+    coffee extension data, since the page is being served as-is.
+    """
+    url = req.url
+    print(f'[Golden Years] Serving live page (whitelisted): {url}')
+
+    try:
+        # Use the same session and headers as the archive fetcher
+        live_headers = {'User-Agent': USER_AGENT}
+        
+        if req.method == 'POST':
+            live_response = archive_session.post(url, data=req.form, headers=live_headers, timeout=15)
+        else:
+            live_response = archive_session.get(url, params=req.args, headers=live_headers, timeout=15)
+
+        content = live_response.content
+        if not content:
+            raise Exception("Empty response received from live server")
+
+        content_type = live_response.headers.get('Content-Type', '').split(';')[0].strip()
+        print(f'[Golden Years] Live page Content-Type: {content_type}')
+
+        # Pass through non-HTML content
+        if not content_type.startswith('text/html'):
+            return content, live_response.status_code, {'Content-Type': content_type}
+
+        # Decode and apply character conversion
+        html_content = content.decode('utf-8', errors='replace')
+        should_convert = config.CONVERT_CHARACTERS and config.CONVERSION_TABLE
+        if should_convert:
+            for key, replacement in config.CONVERSION_TABLE.items():
+                if isinstance(replacement, bytes):
+                    replacement = replacement.decode("utf-8")
+                html_content = html_content.replace(key, replacement)
+
+        return html_content, live_response.status_code, {'Content-Type': 'text/html'}
+
+    except Exception as e:
+        print(f"[Golden Years] Error serving live page: {str(e)}")
+        return f"<html><body><center><font size=\"7\"><h4>Project:<br>Golden Years</h4></font><p><b>Error serving live page:</b><br>{str(e)}</p><p><a href=\"http://goldenyears.yay/\">back to Golden Years</a></p></center></body></html>", 500, {'Content-Type': 'text/html'}
+
+
 def handle_request(req):
     global override_active, selected_year
 
@@ -656,6 +712,10 @@ def handle_request(req):
             years=years,
             selected_year=selected_year
         ), 200
+
+    # Check if the requested domain is whitelisted — serve live instead of archived
+    if is_whitelisted_domain(host):
+        return serve_live_page(req)
 
     # For all other domains: fetch from archive.org, rewire forms, serve
     return serve_archived_page(req)
