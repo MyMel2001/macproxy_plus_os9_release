@@ -187,7 +187,7 @@ def find_july_snapshot(url, year):
             'filter': '!statuscode:5xx'
         }
 
-        response = archive_session.get(cdx_url, params=params, timeout=30)
+        response = archive_session.get(cdx_url, params=params, timeout=225)
         if response.status_code == 200:
             data = response.json()
             if len(data) > 1:
