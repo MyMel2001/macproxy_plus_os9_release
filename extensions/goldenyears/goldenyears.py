@@ -26,6 +26,7 @@ import config
 import os
 import importlib.util
 import json
+from datetime import datetime
 
 # Import the coffee extensions system using importlib
 _coffee_ext_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'coffee_extensions', '__init__.py')
@@ -40,6 +41,15 @@ get_extension_creation_prompt = coffee_extensions_module.get_extension_creation_
 create_extension_from_ai = coffee_extensions_module.create_extension_from_ai
 route_form_action = coffee_extensions_module.route_form_action
 action_routes = coffee_extensions_module.action_routes
+
+# Import the AI page cache from coffee_page_cache
+_coffee_cache_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'coffee_extensions', 'coffee_page_cache.py')
+_coffee_cache_spec = importlib.util.spec_from_file_location("coffee_page_cache", _coffee_cache_path)
+coffee_cache_module = importlib.util.module_from_spec(_coffee_cache_spec)
+_coffee_cache_spec.loader.exec_module(coffee_cache_module)
+
+get_cached_page = coffee_cache_module.get_cached_page
+set_cached_page = coffee_cache_module.set_cached_page
 
 # Initialize the OpenAI client with admin-specified endpoint
 client = OpenAI(
@@ -97,6 +107,71 @@ GOLDEN_YEARS_TEMPLATE = """
 """
 
 # Prompt for AI to create a new coffee extension from an unknown form
+# Prompt for AI to recreate a missing page as a period-authentic 1998 web page
+AI_PAGE_RECREATION_PROMPT = """You are "Project: Golden Years", a time-machine web revival engine. A user has requested a webpage that does not exist in the Internet Archive for July {year}.
+
+You must recreate what this page WOULD have looked like in July {year}, as if it existed back then. The page must be fully compatible with Internet Explorer 5 on Mac OS 9.
+
+== THE REQUESTED URL ==
+{url}
+
+== THE PAGE TITLE (from URL or context) ==
+{page_title}
+
+== TECHNICAL CONSTRAINTS ==
+- NO CSS whatsoever (not inline, not <style>, not <link>)
+- NO JavaScript whatsoever (no <script> tags, no event handlers like onclick, onload, etc.)
+- NO HTML5 elements (no <header>, <footer>, <nav>, <article>, <section>, <aside>, <main>)
+- NO SVG, NO canvas, NO video, NO audio
+- NO web fonts, NO @font-face
+- NO modern HTML features (no data-* attributes, no ARIA roles)
+- NO iframes, NO framesets, NO object, NO embed, NO applet
+- NO XML, NO XHTML syntax (no self-closing tags like <br/>)
+- NO CSS frameworks, NO JavaScript libraries
+
+== ALLOWED HTML ==
+Use ONLY these HTML 3.2 / early HTML 4.0 tags:
+- <html>, <head>, <title>, <body>
+- <h1> through <h6>, <p>, <br>, <hr>, <center>
+- <b>, <i>, <u>, <tt>, <pre>, <font>, <small>, <big>
+- <a>, <img>, <table>, <tr>, <td>, <th>, <caption>
+- <ul>, <ol>, <li>, <dl>, <dt>, <dd>
+- <form>, <input>, <select>, <option>, <textarea>
+- <blockquote>, <address>, <code>, <kbd>, <samp>, <var>
+- <div>, <span> (only with align attribute, no style/class)
+
+== FORMATTING RULES ==
+- Use <font size="7"> through <font size="1"> for text sizing (no CSS)
+- Use <center> for centering content
+- Use <hr noshade size="1"> for horizontal rules
+- Use <br> (never <br/>)
+- Use <table border="0" width="100%"> for layout
+- Use bgcolor="#XXXXXX" on <body> and <table> for background colors
+- Use text="#XXXXXX" on <body> for text color
+- Use align="left|center|right" on <p>, <div>, <td> for alignment
+- Use <img> with width and height attributes (no alt attribute needed)
+- Use <a href="..."> for links
+- Use <form method="get|post" action="..."> for forms
+
+== PAGE CONTENT ==
+Create a believable, period-authentic page for {url} as it would have appeared in July {year}.
+The page should:
+1. Have a fitting title and heading based on the URL
+2. Include navigation links that would have been typical for the era
+3. Have actual content that makes sense for the site
+4. Include a "Last updated" date in July {year}
+5. Have a mailto link for the webmaster
+6. Include a "Best viewed in" badge (Netscape Navigator or Internet Explorer)
+7. Show "This page is best viewed at 800x600" somewhere
+8. Include an under-construction GIF placeholder (use <img> with a broken-image icon description)
+9. Have a hit counter (use <img> with a fake counter number)
+10. Include at least one table-based layout section
+
+== OUTPUT ==
+Respond with ONLY the raw HTML content. No markdown, no code fences, no explanations.
+The HTML must start with <html> and end with </html>.
+"""
+
 VIBE_CODE_EXTENSION_PROMPT = """You are "Project: Golden Years", a time-machine web revival engine. You are given the HTML of a form from an archived webpage that needs a live API backend.
 
 Your job is to create a NEW Python coffee extension module that provides a real API backend for this form's functionality.
@@ -379,6 +454,134 @@ def find_matching_action_route(form_action):
             return (domain, action_name)
 
     return None
+
+
+def _is_page_not_found_error(response):
+    """Check if an archive response indicates the page was genuinely not found.
+    
+    Returns True only for 404 and other 'page not found' error codes.
+    Does NOT return True for 500 (server error) or 429 (rate limit) since
+    those indicate the page exists but couldn't be served right now.
+    """
+    if response is None:
+        return False
+    
+    status = response.status_code
+    
+    # 404 is the classic "not found"
+    if status == 404:
+        return True
+    
+    # Other "not found" codes
+    if status in (410, 301, 302, 303, 307, 308):
+        # 410 = Gone, 3xx = redirects that lead nowhere
+        # Check if the content also suggests "not found"
+        content = response.text.lower()
+        not_found_phrases = [
+            "not found", "404", "page not found", "page cannot be found",
+            "does not exist", "no such page", "could not be found",
+            "error 404", "http 404", "not exist", "no longer available",
+            "this page has been removed", "page is not available"
+        ]
+        if any(phrase in content for phrase in not_found_phrases):
+            return True
+    
+    # 5xx and 429 are NOT considered "not found" - the page exists but has issues
+    if status in (429, 500, 502, 503, 504):
+        return False
+    
+    # Any other status is not a "not found" error
+    return False
+
+
+def _extract_page_title(url):
+    """Extract a human-readable page title from a URL."""
+    parsed = urlparse(url)
+    path = parsed.path.strip('/')
+    
+    # Use the hostname as the primary title source
+    hostname = parsed.netloc or parsed.hostname or "Unknown Site"
+    
+    # Try to extract a meaningful title from the path
+    if path:
+        # Remove file extensions and common prefixes
+        title = path.split('/')[-1]
+        title = re.sub(r'\.(html?|php|asp|aspx|jsp|cgi|pl)$', '', title)
+        title = title.replace('_', ' ').replace('-', ' ').replace('+', ' ')
+        title = title.strip()
+        if title:
+            return f"{hostname} - {title.title()}"
+    
+    return f"Welcome to {hostname}"
+
+
+def ai_recreate_page(url, year):
+    """Use AI to recreate what a missing page would have looked like in July {year}.
+    
+    First checks the cache in coffee_crypto. If not cached, calls the AI model
+    to generate a period-authentic 1998-era page, caches it, and returns it.
+    
+    Returns:
+        tuple: (html_content, from_cache_bool) or (None, False) on failure.
+    """
+    from jinja2 import Template
+    
+    # Build the date string for this specific year's July
+    date_str = f"{year}0710"
+    
+    # Check cache first
+    cached = get_cached_page(url, date_str)
+    if cached is not None:
+        print(f'[Golden Years] Using cached AI-recreated page for {url}')
+        return cached, True
+    
+    # Extract a page title from the URL
+    page_title = _extract_page_title(url)
+    
+    # Render the prompt template
+    prompt_template = Template(AI_PAGE_RECREATION_PROMPT)
+    system_prompt = prompt_template.render(
+        url=url,
+        year=year,
+        page_title=page_title
+    )
+    
+    try:
+        print(f'[Golden Years] AI-recreating missing page: {url} (July {year})')
+        response = client.chat.completions.create(
+            model=config.GOLDEN_YEARS_MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a time-machine web revival engine. You recreate period-authentic 1998-era web pages. Respond ONLY with raw HTML, no markdown, no code fences."
+                },
+                {"role": "user", "content": system_prompt}
+            ],
+            max_tokens=8192,
+            temperature=0.7
+        )
+        
+        html_content = response.choices[0].message.content.strip()
+        
+        # Clean up any markdown code fences the AI might have added
+        html_content = re.sub(r'^```(?:html)?\s*', '', html_content)
+        html_content = re.sub(r'\s*```$', '', html_content)
+        
+        # Ensure it starts with <html> and ends with </html>
+        if not html_content.startswith('<html'):
+            html_content = f'<html><head><title>{page_title}</title></head><body>{html_content}</body></html>'
+        if not html_content.endswith('</html>'):
+            html_content += '</html>'
+        
+        # Cache it
+        set_cached_page(url, date_str, html_content)
+        
+        print(f'[Golden Years] AI-recreated page for {url} ({len(html_content)} bytes)')
+        return html_content, False
+        
+    except Exception as e:
+        print(f'[Golden Years] Error AI-recreating page: {str(e)}')
+        return None, False
 
 
 def vibe_code_new_extension(form_html, form_action, year):
@@ -847,9 +1050,46 @@ def serve_archived_page(req):
         timestamp = find_july_snapshot(url, selected_year)
 
         if not timestamp:
+            # No snapshot found in the Internet Archive - this is a genuine
+            # "page not found" scenario. Try AI recreation instead.
+            print(f'[Golden Years] No snapshot found for {url} in July {selected_year}')
+            print(f'[Golden Years] Attempting AI recreation of missing page...')
+            ai_html, from_cache = ai_recreate_page(url, selected_year)
+            if ai_html:
+                cache_label = "cached" if from_cache else "AI-generated"
+                print(f'[Golden Years] Serving {cache_label} page for {url}')
+                # Apply character conversion
+                should_convert = config.CONVERT_CHARACTERS and config.CONVERSION_TABLE
+                if should_convert:
+                    for key, replacement in config.CONVERSION_TABLE.items():
+                        if isinstance(replacement, bytes):
+                            replacement = replacement.decode("utf-8")
+                        ai_html = ai_html.replace(key, replacement)
+                return ai_html, 200, {'Content-Type': 'text/html'}
+            
+            # AI recreation also failed - fall back to the standard error page
             return f"<html><body><center><font size=\"7\"><h4>Project:<br>Golden Years</h4></font><p><b>No archived snapshot found</b><br>for {url} in July {selected_year}.</p><p><a href=\"http://goldenyears.yay/\">back to Golden Years</a></p></center></body></html>", 404, {'Content-Type': 'text/html'}
 
         archive_response = make_archive_request(url, timestamp)
+        
+        # Check if the archive returned a "not found" error (but NOT 500/429)
+        if _is_page_not_found_error(archive_response):
+            print(f'[Golden Years] Archive returned not-found for {url} (status {archive_response.status_code})')
+            print(f'[Golden Years] Attempting AI recreation of missing page...')
+            ai_html, from_cache = ai_recreate_page(url, selected_year)
+            if ai_html:
+                cache_label = "cached" if from_cache else "AI-generated"
+                print(f'[Golden Years] Serving {cache_label} page for {url}')
+                # Apply character conversion
+                should_convert = config.CONVERT_CHARACTERS and config.CONVERSION_TABLE
+                if should_convert:
+                    for key, replacement in config.CONVERSION_TABLE.items():
+                        if isinstance(replacement, bytes):
+                            replacement = replacement.decode("utf-8")
+                        ai_html = ai_html.replace(key, replacement)
+                return ai_html, 200, {'Content-Type': 'text/html'}
+            # AI recreation failed, fall through to normal error handling below
+        
         content = archive_response.content
         if not content:
             raise Exception("Empty response received from archive")
