@@ -994,57 +994,33 @@ def serve_archived_page(req):
 
                             return final_html, 200, {'Content-Type': 'text/html'}
 
-            # If something went wrong, just serve the page normally
-            print(f'[Golden Years] Coffee extension returned no data, serving page normally')
+                # Archive fetch failed (no snapshot, non-200, or empty content) —
+                # fall back to showing the extension's results on the current page
+                # instead of silently discarding them.
+                print(f'[Golden Years] Archive fetch failed for {next_url}, showing extension results on current page')
+                current_timestamp = find_july_snapshot(url, selected_year)
+                if current_timestamp:
+                    current_archive_response = make_archive_request(url, current_timestamp)
+                    if current_archive_response.status_code == 200:
+                        current_content = current_archive_response.content
+                        if current_content:
+                            current_html = current_content.decode('utf-8', errors='replace')
+                            current_cleaned = strip_wayback_injected_elements(current_html)
+                            current_processed = process_html_content(current_cleaned, url)
+                            final_html = apply_data_to_page(current_processed, result_data, url, selected_year)
 
-            if coffee_ext and coffee_ext in coffee_extensions_registry:
-                # This is a form submission to a coffee extension
-                module = coffee_extensions_registry[coffee_ext]
-                print(f'[Golden Years] Processing coffee extension submission: {coffee_ext}/{coffee_action}')
+                            should_convert = config.CONVERT_CHARACTERS and config.CONVERSION_TABLE
+                            if should_convert:
+                                for key, replacement in config.CONVERSION_TABLE.items():
+                                    if isinstance(replacement, bytes):
+                                        replacement = replacement.decode("utf-8")
+                                    final_html = final_html.replace(key, replacement)
 
-                # Collect form data (excluding our hidden fields)
-                form_data = {}
-                for key, value in req.form.items():
-                    if key not in ('_coffee_ext', '_coffee_action', '_coffee_original_action'):
-                        form_data[key] = value
+                            return final_html, 200, {'Content-Type': 'text/html'}
 
-                # Call the extension's handle_action_data to get structured data
-                if hasattr(module, 'handle_action_data'):
-                    result_data = module.handle_action_data(coffee_action, form_data, selected_year)
-                else:
-                    print(f'[Golden Years] Extension {coffee_ext} has no handle_action_data()')
-                    result_data = None
-
-                if result_data:
-                    # Fetch the NEXT page from archive (the form's original action URL)
-                    next_url = original_action if original_action else url
-                    print(f'[Golden Years] Fetching next page from archive: {next_url}')
-
-                    timestamp = find_july_snapshot(next_url, selected_year)
-                    if timestamp:
-                        archive_response = make_archive_request(next_url, timestamp)
-                        if archive_response.status_code == 200:
-                            content = archive_response.content
-                            if content:
-                                html_content = content.decode('utf-8', errors='replace')
-                                cleaned_html = strip_wayback_injected_elements(html_content)
-                                processed_html = process_html_content(cleaned_html, next_url)
-
-                                # Apply the coffee extension data to the archived page
-                                final_html = apply_data_to_page(processed_html, result_data, next_url)
-
-                                # Apply character conversion
-                                should_convert = config.CONVERT_CHARACTERS and config.CONVERSION_TABLE
-                                if should_convert:
-                                    for key, replacement in config.CONVERSION_TABLE.items():
-                                        if isinstance(replacement, bytes):
-                                            replacement = replacement.decode("utf-8")
-                                        final_html = final_html.replace(key, replacement)
-
-                                return final_html, 200, {'Content-Type': 'text/html'}
-
-                # If something went wrong, just serve the page normally
-                print(f'[Golden Years] Coffee extension returned no data, serving page normally')
+            # If something went wrong (extension returned no data, or all fallbacks failed),
+            # just serve the page normally
+            print(f'[Golden Years] Coffee extension returned no usable data, serving page normally')
 
         # Normal GET request or fallback: fetch and serve the archived page
         timestamp = find_july_snapshot(url, selected_year)
