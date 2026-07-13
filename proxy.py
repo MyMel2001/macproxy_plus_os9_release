@@ -91,14 +91,17 @@ def handle_request(path):
 	if override_extension:
 		print(f'Current override extension: {override_extension}')
 
-	override_response = handle_override_extension(scheme)
-	if override_response is not None:
-		return process_response(override_response, request.url)
-
+	# Check for a matching extension FIRST — dedicated extensions (yeahyoutube, reddit,
+	# github, etc.) should handle their own domains even when an override is active.
+	# The override (e.g. Golden Years) only handles domains without a dedicated extension.
 	matching_extension = find_matching_extension(host)
 	if matching_extension:
 		response = handle_matching_extension(matching_extension)
 		return process_response(response, request.url)
+
+	override_response = handle_override_extension(scheme)
+	if override_response is not None:
+		return process_response(override_response, request.url)
 	
 	# Only handle image requests here if we're not using an extension
 	if is_image_url(request.url) and not (override_extension or matching_extension):

@@ -1,3 +1,14 @@
+# Project: Golden Years - OpenAI-compatible endpoint configuration
+# Point this at any OpenAI-compatible API (OpenAI, Ollama, vLLM, etc.)
+GOLDEN_YEARS_API_BASE_URL = "http://100.118.11.83:11434/v1"
+GOLDEN_YEARS_API_KEY = "x"
+GOLDEN_YEARS_MODEL = "gemma4:12b"
+
+# Coffee Extensions - Bluesky Social (maps Twitter/X forms to Bluesky API)
+BLUESKY_HANDLE = "nodemixaholic.com"
+BLUESKY_APP_PASSWORD = ""
+BLUESKY_PDS_URL = "https://bsky.nodemixaholic.com"  # Custom PDS endpoint (self-hosted, etc.)
+
 WEB_SIMULATOR_PROMPT_ADDENDUM=""
 WHITELISTED_DOMAINS = [
 	"weather.gov",
@@ -18,7 +29,8 @@ WHITELISTED_DOMAINS = [
 	"osn.nodemixaholic.com",
 	"newnet.lol",
 	"samantha.ai",
-	"samantha.web"
+	"samantha.web",
+	"goldenyears.yay"
 ]
 ZIP_CODE = 75602
 ENABLED_EXTENSIONS = [
@@ -32,7 +44,9 @@ ENABLED_EXTENSIONS = [
 	"yeahyoutube",
 	"samantha-websimulator",
 	"github",
-	"newnet"
+	"newnet",
+	"goldenyears",
+	"publicmode"
 ]
 
 # GitHub extension: list of GitHub usernames whose repos will be shown
@@ -191,4 +205,4 @@ MAX_IMAGE_WIDTH=400
 MAX_IMAGE_HEIGHT=256
 CONVERT_IMAGES=True
 CONVERT_IMAGES_TO_FILETYPE="gif"
-DITHERING_ALGORITHM = "FLOYDSTEINBERG"
+DITHERING_ALGORITHM = None
